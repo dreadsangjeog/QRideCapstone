@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+# Local secrets / env (never commit real keys)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Supabase CLI local cache (machine-specific)
+supabase/.temp/

@@ -1,0 +1,23 @@
+# Supabase CLI config (https://supabase.com/docs/guides/cli/config)
+# Deploy: from repo root → `npx supabase functions deploy <name> --use-api`
+# (`--use-api` bundles in the cloud so Docker is not required on Windows.)
+
+[functions.login-with-username]
+enabled = true
+verify_jwt = false
+
+[functions.send-recovery-otp]
+enabled = true
+verify_jwt = false
+
+[functions.reset-password-with-otp]
+enabled = true
+verify_jwt = false
+
+[functions.request-signup-otp]
+enabled = true
+verify_jwt = false
+
+[functions.complete-signup]
+enabled = true
+verify_jwt = false
