@@ -92,12 +92,94 @@ class AdminRepository {
   Future<List<RentalWithBike>> fetchActiveRentalsWithBikes() async {
     final rows = await SupabaseClientProvider.client
         .from('rentals')
-        .select('*, bikes(*)')
+        .select('*, bikes(*), profiles(username)')
         .eq('status', 'active')
-        .order('started_at', ascending: false);
+        .order('approved_at', ascending: false);
     return (rows as List<dynamic>)
         .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Full rental log for admin (newest first). Optional [status] filters to one status.
+  Future<List<RentalWithBike>> fetchRentalsHistory({
+    int limit = 500,
+    String? status,
+  }) async {
+    var q = SupabaseClientProvider.client
+        .from('rentals')
+        .select('*, bikes(*), profiles(username)');
+    if (status != null && status.isNotEmpty) {
+      q = q.eq('status', status);
+    }
+    final rows = await q.order('started_at', ascending: false).limit(limit);
+    return (rows as List<dynamic>)
+        .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Pending rental requests waiting for admin approval.
+  Future<List<RentalWithBike>> fetchPendingRentals() async {
+    final rows = await SupabaseClientProvider.client
+        .from('rentals')
+        .select('*, bikes(*), profiles(username)')
+        .eq('status', 'pending')
+        .order('started_at', ascending: true);
+    return (rows as List<dynamic>)
+        .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Approves a pending rental — the user's countdown starts from this moment.
+  Future<void> approveRental(String rentalId) async {
+    await SupabaseClientProvider.client.rpc(
+      'approve_rental',
+      params: {'p_rental_id': rentalId},
+    );
+  }
+
+  /// Rejects a pending rental — the bike is freed immediately.
+  Future<void> rejectRental(String rentalId) async {
+    await SupabaseClientProvider.client.rpc(
+      'reject_rental',
+      params: {'p_rental_id': rentalId},
+    );
+  }
+
+  /// Ends an active rental. Pass pre-calculated [actualCost] and [penaltyFee].
+  Future<void> endRentalByAdmin({
+    required String rentalId,
+    required double actualCost,
+    required double penaltyFee,
+  }) async {
+    await SupabaseClientProvider.client.rpc(
+      'end_rental_by_admin',
+      params: {
+        'p_rental_id': rentalId,
+        'p_actual_cost': actualCost,
+        'p_penalty_fee': penaltyFee,
+      },
+    );
+  }
+
+  /// Fix billing on an already-ended rental (late end, wrong tap, waived penalty, etc.).
+  /// [actualCost] is total charged (base + penalty), matching [endRentalByAdmin].
+  Future<void> adjustEndedRentalBilling({
+    required String rentalId,
+    required double actualCost,
+    required double penaltyFee,
+  }) async {
+    final rows = await SupabaseClientProvider.client
+        .from('rentals')
+        .update({
+          'actual_cost': actualCost,
+          'penalty_fee': penaltyFee,
+        })
+        .eq('id', rentalId)
+        .eq('status', 'ended')
+        .select('id');
+    if ((rows as List).isEmpty) {
+      throw StateError('Could not update rental (missing or not ended).');
+    }
   }
 
   Future<RentalLocation?> fetchLastLocationForRental(String rentalId) async {
@@ -110,22 +192,46 @@ class AdminRepository {
     return RentalLocation.fromJson(row);
   }
 
-  /// Last-known locations for active rentals, joined with bike info.
-  ///
-  /// This is optimized for the admin map (single round-trip for locations).
+  /// Returns last-known GPS locations for all currently active rentals,
+  /// with bike info attached. Uses two queries to avoid PostgREST embedded-filter
+  /// quirks that can silently return empty results.
   Future<List<Map<String, dynamic>>> fetchActiveRentalLastLocationsJoined() async {
-    final active = await fetchActiveRentalsWithBikes();
-    final ids = active.map((e) => e.rental.id).toList();
-    if (ids.isEmpty) return const [];
+    // Step 1: get IDs of all active rentals plus their bike + rider info.
+    final activeRentals = await SupabaseClientProvider.client
+        .from('rentals')
+        .select('id, bikes(code, label), profiles(username)')
+        .eq('status', 'active');
 
-    final rows = await SupabaseClientProvider.client
-        .from('rental_last_location')
-        .select('*, rentals(*, bikes(*))')
-        .inFilter('rental_id', ids);
+    if ((activeRentals as List).isEmpty) return [];
 
-    return (rows as List<dynamic>)
-        .map((e) => e as Map<String, dynamic>)
+    final rentalIds = activeRentals
+        .map((r) => r['id'].toString())
         .toList();
+
+    // Step 2: get last locations for those rental IDs.
+    final locations = await SupabaseClientProvider.client
+        .from('rental_last_location')
+        .select()
+        .inFilter('rental_id', rentalIds);
+
+    // Merge bike + rider info into each location row.
+    final bikeMap = <String, Map<String, dynamic>>{
+      for (final r in activeRentals)
+        r['id'].toString(): {
+          'rentals': {
+            'status': 'active',
+            'bikes': r['bikes'],
+            'profiles': r['profiles'],
+          },
+        },
+    };
+
+    return (locations as List<dynamic>).map((loc) {
+      final row = Map<String, dynamic>.from(loc as Map);
+      final rentalId = row['rental_id'].toString();
+      row.addAll(bikeMap[rentalId] ?? {});
+      return row;
+    }).toList();
   }
 }
 

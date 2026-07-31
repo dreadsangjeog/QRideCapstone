@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../services/auth_service.dart';
 import '../utils/auth_validators.dart';
+import '../utils/error_message.dart';
+import '../widgets/auth_branding.dart';
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 
@@ -31,9 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
-    setState(() {
-      _error = null;
-    });
+    setState(() => _error = null);
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _busy = true);
@@ -42,9 +43,6 @@ class _LoginScreenState extends State<LoginScreen> {
         username: _username.text,
         password: _password.text,
       );
-      // [_AuthGate] rebuilds to [UserRootShell] when the session is set.
-      // Avoid route replacement here: it can race with that rebuild and dispose this
-      // screen before loading state is cleared, or drop [_AuthGate] from the tree.
       if (!mounted) return;
     } on FunctionException catch (e) {
       setState(() {
@@ -60,7 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       });
     } catch (e) {
-      final msg = e.toString();
+      final msg = stripExceptionPrefix(e.toString());
       setState(() {
         if (msg.contains('Email not confirmed') ||
             msg.contains('email_not_confirmed')) {
@@ -81,19 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final cs = theme.colorScheme;
 
     return Scaffold(
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              cs.primary.withValues(alpha: 0.12),
-              cs.surface,
-              cs.secondary.withValues(alpha: 0.10),
-            ],
-            stops: const [0.0, 0.55, 1.0],
-          ),
-        ),
+      body: AuthGradientBackground(
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -103,26 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 12),
-                    Text(
-                      'QRide',
-                      style: theme.textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5,
-                        color: cs.primary,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Scan • Ride • Return',
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        color: theme.textTheme.bodyMedium?.color
-                            ?.withValues(alpha: 0.75),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 28),
+                    const AuthBrandHeader(),
                     Card(
                       elevation: 0,
                       color: cs.surface,
@@ -137,20 +104,44 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              'Welcome back',
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Sign in with your username and password. Gmail is only used when you register '
-                              '(verification) or if you use Forgot password.',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.textTheme.bodyMedium?.color
-                                    ?.withValues(alpha: 0.7),
-                              ),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 4,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [
+                                        AuthBrandHeader.brandGradientStart,
+                                        AuthBrandHeader.brandGradientEnd,
+                                      ],
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                    ),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Welcome back',
+                                      style: theme.textTheme.titleLarge
+                                          ?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: -0.3,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Sign in to continue riding',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 16),
                             Form(
@@ -177,7 +168,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     decoration: InputDecoration(
                                       labelText: 'Password',
                                       hintText: 'Enter your password',
-                                      prefixIcon: const Icon(Icons.lock_outline),
+                                      prefixIcon:
+                                          const Icon(Icons.lock_outline),
                                       suffixIcon: IconButton(
                                         tooltip: _showPassword
                                             ? 'Hide password'
@@ -193,8 +185,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     ),
                                     validator: (v) {
-                                      final s = (v ?? '');
-                                      if (s.isEmpty) return 'Password required';
+                                      if ((v ?? '').isEmpty) {
+                                        return 'Password required';
+                                      }
                                       return null;
                                     },
                                     onFieldSubmitted: (_) =>
@@ -213,10 +206,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(14),
                                   ),
-                                  textStyle:
-                                      theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                                  textStyle: theme.textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
                                 ),
                                 onPressed: _busy ? null : _submit,
                                 child: _busy
@@ -243,19 +234,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             ],
                             const SizedBox(height: 10),
                             TextButton(
-                              onPressed: () {
-                                Navigator.of(context)
-                                    .pushNamed(RegisterScreen.routeName);
-                              },
-                              child:
-                                  const Text("Don't have an account? Register"),
+                              onPressed: () => Navigator.of(context)
+                                  .pushNamed(RegisterScreen.routeName),
+                              child: const Text("Don't have an account? Register"),
                             ),
                             TextButton(
-                              onPressed: () {
-                                Navigator.of(context).pushNamed(
-                                  ForgotPasswordScreen.routeName,
-                                );
-                              },
+                              onPressed: () => Navigator.of(context)
+                                  .pushNamed(ForgotPasswordScreen.routeName),
                               child: const Text('Forgot password?'),
                             ),
                           ],
@@ -282,4 +267,3 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-

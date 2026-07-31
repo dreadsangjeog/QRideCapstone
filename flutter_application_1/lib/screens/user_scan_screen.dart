@@ -3,190 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:geolocator/geolocator.dart';
+
 import '../models/bike.dart';
 import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
-import '../services/location_tracking_service.dart';
 import '../services/rental_repository.dart';
 import '../widgets/user_portal_chrome.dart';
 
-/// Normalizes QR text: plain bike code, or `?code=` / last path segment for URLs.
-String normalizeBikeCodeFromScan(String raw) {
-  final t = raw.trim();
-  if (t.isEmpty) return t;
-  final uri = Uri.tryParse(t);
-  if (uri != null &&
-      (uri.hasScheme && (uri.scheme == 'http' || uri.scheme == 'https'))) {
-    final q = uri.queryParameters['code'] ?? uri.queryParameters['bike'];
-    if (q != null && q.trim().isNotEmpty) return q.trim();
-    final seg = uri.pathSegments.where((s) => s.isNotEmpty).toList();
-    if (seg.isNotEmpty) return seg.last;
-  }
-  return t;
-}
-
-/// Centered square scan area (matches [MobileScanner.scanWindow] layout).
-Rect scanWindowRectForLayout(Size size) {
-  final shortest = size.width < size.height ? size.width : size.height;
-  final frame = shortest * 0.68;
-  final left = (size.width - frame) / 2;
-  final top = (size.height - frame) / 2 - shortest * 0.05;
-  return Rect.fromLTWH(left, top, frame, frame);
-}
-
-/// Dimmed mask outside a rounded [frame] + white corner brackets (pass-through for taps).
-class ScanFrameOverlayPainter extends CustomPainter {
-  ScanFrameOverlayPainter({
-    required this.frame,
-    this.cornerRadius = 20,
-  });
-
-  final Rect frame;
-  final double cornerRadius;
-
-  /// Slightly blue-tinted scrim reads cleaner on camera than flat gray-black.
-  static const _dim = Color(0xB8171C22);
-  static const _arm = 42.0;
-  static const _stroke = 3.5;
-  static const _cornerColor = Color(0xFFF5F8FC);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final hole = RRect.fromRectAndRadius(
-      frame,
-      Radius.circular(cornerRadius),
-    );
-    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    final inner = Path()..addRRect(hole);
-    final mask = Path.combine(PathOperation.difference, outer, inner);
-    canvas.drawPath(mask, Paint()..color = _dim);
-
-    final corner = Paint()
-      ..color = _cornerColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = _stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final l = frame.left;
-    final t = frame.top;
-    final r = frame.right;
-    final b = frame.bottom;
-
-    // Top-left
-    canvas.drawLine(Offset(l, t + _arm), Offset(l, t), corner);
-    canvas.drawLine(Offset(l, t), Offset(l + _arm, t), corner);
-    // Top-right
-    canvas.drawLine(Offset(r - _arm, t), Offset(r, t), corner);
-    canvas.drawLine(Offset(r, t), Offset(r, t + _arm), corner);
-    // Bottom-left
-    canvas.drawLine(Offset(l, b - _arm), Offset(l, b), corner);
-    canvas.drawLine(Offset(l, b), Offset(l + _arm, b), corner);
-    // Bottom-right
-    canvas.drawLine(Offset(r - _arm, b), Offset(r, b), corner);
-    canvas.drawLine(Offset(r, b), Offset(r, b - _arm), corner);
-  }
-
-  @override
-  bool shouldRepaint(covariant ScanFrameOverlayPainter oldDelegate) {
-    return oldDelegate.frame != frame ||
-        oldDelegate.cornerRadius != cornerRadius;
-  }
-
-  @override
-  bool? hitTest(Offset position) => false;
-}
-
-class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({
-    required this.icon,
-    this.onPressed,
-    this.tooltip,
-  });
-
-  final IconData icon;
-  final VoidCallback? onPressed;
-  final String? tooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    final child = Material(
-      color: const Color(0x4D000000),
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        customBorder: const CircleBorder(),
-        child: Container(
-          width: 46,
-          height: 46,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
-          ),
-          child: Icon(icon, color: Colors.white, size: 24),
-        ),
-      ),
-    );
-    if (tooltip == null || tooltip!.isEmpty) return child;
-    return Tooltip(message: tooltip!, child: child);
-  }
-}
-
-class _TorchFab extends StatelessWidget {
-  const _TorchFab({
-    required this.isOn,
-    required this.busy,
-    required this.onPressed,
-  });
-
-  final bool isOn;
-  final bool busy;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final label = isOn ? 'Flashlight on' : 'Flashlight';
-
-    return Semantics(
-      button: true,
-      label: label,
-      child: Material(
-        color: isOn
-            ? theme.colorScheme.primary.withValues(alpha: 0.35)
-            : const Color(0x4D000000),
-        shape: const CircleBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: busy ? null : onPressed,
-          customBorder: const CircleBorder(),
-          child: Ink(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isOn
-                    ? theme.colorScheme.primary.withValues(alpha: 0.9)
-                    : Colors.white30,
-                width: 1.5,
-              ),
-            ),
-            child: Icon(
-              isOn
-                  ? Icons.flashlight_on_rounded
-                  : Icons.flashlight_off_outlined,
-              color: Colors.white,
-              size: 26,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+part 'user_scan_helpers.dart';
+part 'user_scan_widgets.dart';
 
 class UserScanScreen extends StatefulWidget {
   const UserScanScreen({super.key});
@@ -198,7 +24,6 @@ class UserScanScreen extends StatefulWidget {
 class _UserScanScreenState extends State<UserScanScreen> {
   final _adminRepo = AdminRepository();
   final _rentalRepo = RentalRepository();
-  final _tracking = LocationTrackingService();
 
   MobileScannerController? _scannerController;
   bool _scannerVisible = false;
@@ -348,37 +173,100 @@ class _UserScanScreenState extends State<UserScanScreen> {
     if (bike.status != 'available') {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'This bike is not available (status: ${bike.status}).',
-          ),
+          content: Text('This bike is not available (status: ${bike.status}).'),
         ),
       );
       await _restartScannerIfNeeded();
       return;
     }
 
+    // 1. GPS must be enabled before the rider can request a rental.
+    final gpsEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!gpsEnabled) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) {
+          final t = Theme.of(ctx);
+          return AlertDialog(
+            icon: Icon(Icons.location_off_outlined,
+                size: 32, color: t.colorScheme.error),
+            title: const Text('GPS is off'),
+            content: const Text(
+              'QRide needs your GPS to track the ride and show your location to the admin. '
+              'Please enable Location Services in your device settings, then try again.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Geolocator.openLocationSettings();
+                },
+                child: const Text('Open settings'),
+              ),
+            ],
+          );
+        },
+      );
+      await _restartScannerIfNeeded();
+      return;
+    }
+
+    // 2. Show duration picker + cost summary.
+    final planned = await _showDurationPicker(bike);
+    if (planned == null || !mounted) {
+      await _restartScannerIfNeeded();
+      return;
+    }
+
+    // 3. Submit request.
     try {
-      final rentalId = await _rentalRepo.startRental(bikeId: bike.id);
-      await _tracking.startTracking(
-        rentalId: rentalId,
-        minInterval: const Duration(seconds: 45),
+      await _rentalRepo.requestRental(
+        bikeId: bike.id,
+        plannedMinutes: planned,
       );
       if (!mounted) return;
-      _processingFrame = false;
       _closeScanner();
-      final label = bike.label?.trim().isNotEmpty == true
-          ? '${bike.label} (${bike.code})'
-          : 'Bike ${bike.code}';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Rental started: $label. Tracking is on.')),
+        const SnackBar(
+          content: Text('Request submitted! Waiting for admin approval.'),
+          duration: Duration(seconds: 4),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
+      final msg = e.toString();
+      final friendly = msg.contains('already_has_active_rental')
+          ? 'You already have an active or pending rental.'
+          : msg.contains('bike_not_available')
+              ? 'This bike is no longer available.'
+              : msg;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
+        SnackBar(content: Text(friendly)),
       );
       await _restartScannerIfNeeded();
     }
+  }
+
+  /// Shows a bottom sheet for the rider to choose rental duration.
+  /// Returns the chosen number of minutes, or null if cancelled.
+  Future<int?> _showDurationPicker(Bike bike) async {
+    final bikeLabel = bike.label?.trim().isNotEmpty == true
+        ? '${bike.label} (${bike.code})'
+        : 'Bike ${bike.code}';
+
+    return showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => _DurationPickerSheet(bikeLabel: bikeLabel),
+    );
   }
 
   Future<void> _manualCodeEntry() async {

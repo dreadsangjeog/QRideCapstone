@@ -42,10 +42,13 @@ dependencies:
   qr_flutter: ^4.1.0
   flutter_map: ^7.0.0
   latlong2: ^0.9.1
+  flutter_local_notifications: ^18.0.0
+  share_plus: ^12.0.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.14.3
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -64,6 +67,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/images/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -95,3 +101,14 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App icon: bicycle mark only (no word in PNG). Regenerate after changing
+# assets/images/qride_app_icon.png → `dart run flutter_launcher_icons`
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/images/qride_app_icon.png
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: assets/images/qride_app_icon.png
+  adaptive_icon_foreground_inset: 8
+  remove_alpha_ios: true

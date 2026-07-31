@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../main.dart' show themeNotifier;
 import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_generate_qr_screen.dart';
+
+part 'user_profile_widgets.dart';
 
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key});
@@ -175,15 +178,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         vertical: 4,
                       ),
                       leading: Icon(
-                        Icons.notifications_outlined,
+                        Icons.notifications_active_rounded,
                         color: cs.primary,
                       ),
                       title: const Text('Notifications'),
                       subtitle: Text(
-                        'Coming soon',
+                        'Rental alerts are active',
                         style: TextStyle(
-                          color: cs.onSurfaceVariant,
+                          color: cs.primary,
                           fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       trailing: Icon(
@@ -191,12 +195,90 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                       ),
                       onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Notification settings are not configured yet.',
+                        showDialog<void>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            icon: Icon(
+                              Icons.notifications_active_rounded,
+                              color: cs.primary,
+                              size: 32,
+                            ),
+                            title: const Text('Rental notifications'),
+                            content: const Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'You will automatically receive alerts for:',
+                                ),
+                                SizedBox(height: 12),
+                                _NotifRow(
+                                  icon: Icons.check_circle_outline,
+                                  text: 'Rental approved by admin',
+                                ),
+                                _NotifRow(
+                                  icon: Icons.timer_outlined,
+                                  text: '5-minute warning before time runs out',
+                                ),
+                                _NotifRow(
+                                  icon: Icons.warning_amber_rounded,
+                                  text: 'Overtime started — penalty accruing',
+                                ),
+                                _NotifRow(
+                                  icon: Icons.receipt_long_outlined,
+                                  text: 'Rental ended with cost receipt',
+                                ),
+                                _NotifRow(
+                                  icon: Icons.cancel_outlined,
+                                  text: 'Rental request declined',
+                                ),
+                              ],
+                            ),
+                            actions: [
+                              FilledButton(
+                                onPressed: () => Navigator.of(ctx).pop(),
+                                child: const Text('Got it'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    Divider(
+                      height: 1,
+                      indent: 18,
+                      endIndent: 18,
+                      color: cs.outlineVariant.withValues(alpha: 0.45),
+                    ),
+                    ValueListenableBuilder<ThemeMode>(
+                      valueListenable: themeNotifier,
+                      builder: (context, mode, _) {
+                        final isDark = mode == ThemeMode.dark;
+                        return SwitchListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 2,
+                          ),
+                          secondary: Icon(
+                            isDark
+                                ? Icons.dark_mode_rounded
+                                : Icons.light_mode_rounded,
+                            color: cs.primary,
+                          ),
+                          title: const Text('Dark mode'),
+                          subtitle: Text(
+                            isDark ? 'Dark theme enabled' : 'Light theme active',
+                            style: TextStyle(
+                              color: cs.onSurfaceVariant,
+                              fontSize: 13,
                             ),
                           ),
+                          value: isDark,
+                          activeThumbColor: cs.primary,
+                          onChanged: (on) {
+                            themeNotifier.value =
+                                on ? ThemeMode.dark : ThemeMode.light;
+                          },
                         );
                       },
                     ),
@@ -342,7 +424,35 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       ),
                     ),
                     onTap: () async {
-                      await AuthService.signOut();
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          icon: Icon(
+                            Icons.logout_rounded,
+                            color: cs.error,
+                            size: 28,
+                          ),
+                          title: const Text('Log out?'),
+                          content: const Text(
+                            'You will be returned to the login screen.',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: cs.error,
+                                foregroundColor: cs.onError,
+                              ),
+                              onPressed: () => Navigator.of(ctx).pop(true),
+                              child: const Text('Log out'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true) await AuthService.signOut();
                     },
                   ),
                 ),

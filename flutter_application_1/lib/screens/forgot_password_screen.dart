@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
 import '../utils/auth_validators.dart';
+import '../utils/error_message.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -29,14 +30,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     _otp.dispose();
     _newPassword.dispose();
     super.dispose();
-  }
-
-  String? _otpValidator(String? v) {
-    final s = (v ?? '').trim();
-    if (!RegExp(r'^\d{6}$').hasMatch(s)) {
-      return 'Enter the 6-digit code from your Gmail';
-    }
-    return null;
   }
 
   Future<void> _sendCode() async {
@@ -90,9 +83,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
+      setState(() => _error = stripExceptionPrefix(e.toString()));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -146,7 +137,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           labelText: 'Verification code',
                           prefixIcon: Icon(Icons.pin_outlined),
                         ),
-                        validator: _otpValidator,
+                        validator: AuthValidators.otp6,
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
@@ -156,11 +147,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           labelText: 'New password',
                           prefixIcon: Icon(Icons.lock_outline),
                         ),
-                        validator: (v) {
-                          final s = (v ?? '');
-                          if (s.length < 6) return 'Min 6 characters';
-                          return null;
-                        },
+                        validator: AuthValidators.passwordMin6,
                       ),
                     ],
                     if (_error != null) ...[

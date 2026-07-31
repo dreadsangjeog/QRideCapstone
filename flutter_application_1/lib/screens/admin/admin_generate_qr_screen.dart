@@ -5,9 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/bike.dart';
 import '../../services/admin_repository.dart';
 import '../../services/auth_service.dart';
-
-/// Payload encoded in the QR image (plain bike code).
-String bikeQrPayloadFromCode(String code) => code.trim();
+import '../../utils/bike_qr_payload.dart';
 
 class AdminGenerateQrScreen extends StatefulWidget {
   const AdminGenerateQrScreen({

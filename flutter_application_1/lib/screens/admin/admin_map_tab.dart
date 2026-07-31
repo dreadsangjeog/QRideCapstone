@@ -2,10 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../services/admin_repository.dart';
+
+part 'admin_map_models.dart';
+part 'admin_map_widgets.dart';
 
 class AdminMapTab extends StatefulWidget {
   const AdminMapTab({super.key, required this.repo});
@@ -18,202 +22,264 @@ class AdminMapTab extends StatefulWidget {
 
 class _AdminMapTabState extends State<AdminMapTab> {
   final _mapController = MapController();
-  late Future<List<_AdminMarkerRow>> _future = _load();
-  Timer? _timer;
 
-  Future<List<_AdminMarkerRow>> _load() async {
-    final rows = await widget.repo.fetchActiveRentalLastLocationsJoined();
-    return rows.map(_AdminMarkerRow.fromJoined).where((e) => e != null).cast<_AdminMarkerRow>().toList();
-  }
+  Position? _adminPos;
+  StreamSubscription<Position>? _locationSub;
+  bool _centeredOnAdmin = false;
 
-  Future<void> _refresh() async {
-    setState(() {
-      _future = _load();
-    });
-    await _future;
-  }
+  List<_MarkerRow> _riders = [];
+  bool _loadingRiders = false;
+  DateTime? _lastRefresh;
+  Timer? _refreshTimer;
+
+  bool _mapReady = false;
 
   @override
   void initState() {
     super.initState();
-    // Lightweight "live" refresh for admin monitoring.
-    _timer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (!mounted) return;
-      _refresh();
-    });
+    _startAdminLocation();
+    _loadRiders();
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) {
+        if (mounted) _loadRiders(silent: true);
+      },
+    );
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _locationSub?.cancel();
+    _refreshTimer?.cancel();
+    _mapController.dispose();
     super.dispose();
+  }
+
+  Future<void> _startAdminLocation() async {
+    LocationPermission perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (perm == LocationPermission.denied ||
+        perm == LocationPermission.deniedForever) {
+      return;
+    }
+
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _adminPos = pos);
+      _centerOnAdmin(pos);
+    } catch (_) {}
+
+    _locationSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
+    ).listen((pos) {
+      if (!mounted) return;
+      setState(() => _adminPos = pos);
+      if (!_centeredOnAdmin) _centerOnAdmin(pos);
+    });
+  }
+
+  void _centerOnAdmin(Position pos) {
+    if (!_mapReady) return;
+    _centeredOnAdmin = true;
+    _mapController.move(LatLng(pos.latitude, pos.longitude), 16);
+  }
+
+  Future<void> _loadRiders({bool silent = false}) async {
+    if (!silent) setState(() => _loadingRiders = true);
+    try {
+      final rows = await widget.repo.fetchActiveRentalLastLocationsJoined();
+      final parsed = rows
+          .map(_MarkerRow.fromJoined)
+          .whereType<_MarkerRow>()
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _riders = parsed;
+        _loadingRiders = false;
+        _lastRefresh = DateTime.now();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingRiders = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    return RefreshIndicator(
-      onRefresh: _refresh,
-      child: FutureBuilder<List<_AdminMarkerRow>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return ListView(
-              children: const [
-                SizedBox(height: 160),
-                Center(child: CircularProgressIndicator()),
-              ],
-            );
-          }
-          if (snapshot.hasError) {
-            return ListView(
-              padding: const EdgeInsets.all(24),
-              children: [
-                Icon(Icons.error_outline, size: 56, color: cs.error),
-                const SizedBox(height: 10),
-                Text(
-                  'Could not load map data',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  snapshot.error.toString(),
-                  style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                ),
-                const SizedBox(height: 14),
-                OutlinedButton.icon(
-                  onPressed: _refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
-                ),
-              ],
-            );
-          }
 
-          final items = snapshot.data ?? const <_AdminMarkerRow>[];
-          if (items.isEmpty) {
-            return ListView(
-              padding: const EdgeInsets.all(24),
-              children: [
-                Icon(Icons.map_outlined, size: 56, color: cs.onSurfaceVariant),
-                const SizedBox(height: 12),
-                Text(
-                  'No live locations',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Start a rental and ensure the rider app is sending GPS updates. '
-                  'Then refresh.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 14),
-                OutlinedButton.icon(
-                  onPressed: _refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh'),
-                ),
-              ],
-            );
-          }
+    final initialCenter = _adminPos != null
+        ? LatLng(_adminPos!.latitude, _adminPos!.longitude)
+        : const LatLng(14.5995, 120.9842);
 
-          final center = LatLng(items.first.lat, items.first.lng);
-          final markers = items.map((e) {
-            return Marker(
-              width: 44,
-              height: 44,
-              point: LatLng(e.lat, e.lng),
-              child: GestureDetector(
-                onTap: () => _showDetails(e),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.92),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: cs.surface, width: 2),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      e.bikeCode,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: cs.onPrimary,
-                        fontWeight: FontWeight.w800,
-                      ),
+    final riderMarkers = _riders.map((r) {
+      return Marker(
+        width: 46,
+        height: 46,
+        point: LatLng(r.lat, r.lng),
+        child: GestureDetector(
+          onTap: () => _showRiderDetails(r),
+          child: _RiderDot(cs: cs),
+        ),
+      );
+    }).toList();
+
+    final adminCircles = _adminPos != null
+        ? [
+            CircleMarker(
+              point: LatLng(_adminPos!.latitude, _adminPos!.longitude),
+              radius: _adminPos!.accuracy,
+              useRadiusInMeter: true,
+              color: const Color(0xFF1A73E8).withValues(alpha: 0.15),
+              borderColor: const Color(0xFF1A73E8).withValues(alpha: 0.4),
+              borderStrokeWidth: 1.5,
+            ),
+          ]
+        : <CircleMarker>[];
+
+    final adminMarkers = _adminPos != null
+        ? [
+            Marker(
+              width: 24,
+              height: 24,
+              point: LatLng(_adminPos!.latitude, _adminPos!.longitude),
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF1A73E8),
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x441A73E8),
+                      blurRadius: 8,
+                      spreadRadius: 2,
                     ),
-                  ),
+                  ],
                 ),
               ),
-            );
-          }).toList();
+            ),
+          ]
+        : <Marker>[];
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Live bike locations',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Re-center',
-                        onPressed: () {
-                          _mapController.move(center, 15);
-                        },
-                        icon: const Icon(Icons.my_location_outlined),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: SizedBox(
-                  height: 420,
-                  child: FlutterMap(
-                    mapController: _mapController,
-                    options: MapOptions(
-                      initialCenter: center,
-                      initialZoom: 15,
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: initialCenter,
+            initialZoom: 15,
+            onMapReady: () {
+              _mapReady = true;
+              if (_adminPos != null && !_centeredOnAdmin) {
+                _centerOnAdmin(_adminPos!);
+              }
+            },
+          ),
+          children: [
+            TileLayer(
+              urlTemplate:
+                  'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+              subdomains: const ['a', 'b', 'c', 'd'],
+              userAgentPackageName: 'com.qride.demo',
+              maxZoom: 20,
+              retinaMode: true,
+            ),
+            CircleLayer(circles: adminCircles),
+            MarkerLayer(markers: riderMarkers),
+            MarkerLayer(markers: adminMarkers),
+          ],
+        ),
+        Positioned(
+          top: 12,
+          left: 12,
+          right: 12,
+          child: _StatusCard(
+            riderCount: _riders.length,
+            lastRefresh: _lastRefresh,
+            loading: _loadingRiders,
+            hasAdminGps: _adminPos != null,
+            onRefresh: () => _loadRiders(),
+            onCenterAdmin: _adminPos == null
+                ? null
+                : () => _mapController.move(
+                      LatLng(_adminPos!.latitude, _adminPos!.longitude),
+                      16,
                     ),
-                    children: [
-                      TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.qride',
-                      ),
-                      MarkerLayer(markers: markers),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Tap a marker for details. Auto-refresh every 15 seconds.',
-                style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-              ),
-            ],
-          );
-        },
-      ),
+          ),
+        ),
+        const Positioned(
+          bottom: 16,
+          left: 12,
+          child: _Legend(),
+        ),
+        Positioned(
+          bottom: 16,
+          right: 12,
+          child: FloatingActionButton.extended(
+            heroTag: 'admin-map-riders-fab',
+            onPressed: _showRidersList,
+            backgroundColor: cs.primary,
+            foregroundColor: cs.onPrimary,
+            elevation: 4,
+            icon: const Icon(Icons.people_alt_rounded),
+            label: Text(
+              _riders.isEmpty
+                  ? 'Riders'
+                  : '${_riders.length} rider${_riders.length == 1 ? '' : 's'}',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  Future<void> _showDetails(_AdminMarkerRow row) async {
+  Future<void> _showRidersList() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetCtx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.35,
+          maxChildSize: 0.92,
+          expand: false,
+          builder: (ctx, scrollController) => _RidersListSheet(
+            riders: _riders,
+            loading: _loadingRiders,
+            scrollController: scrollController,
+            onRefresh: () => _loadRiders(),
+            onLocate: (rider) {
+              Navigator.of(sheetCtx).pop();
+              _mapController.move(LatLng(rider.lat, rider.lng), 17);
+            },
+            onDetails: (rider) {
+              Navigator.of(sheetCtx).pop();
+              _showRiderDetails(rider);
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showRiderDetails(_MarkerRow row) async {
     final df = DateFormat('MMM d, h:mm a');
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
@@ -221,38 +287,82 @@ class _AdminMapTabState extends State<AdminMapTab> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                row.bikeLabel,
-                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: cs.errorContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.directions_bike_rounded,
+                      color: cs.onErrorContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          row.bikeLabel,
+                          style: theme.textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          row.bikeCode,
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: cs.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                'Bike code: ${row.bikeCode}',
-                style: theme.textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+              const SizedBox(height: 16),
+              _DetailRow(
+                icon: Icons.person_outline_rounded,
+                label: 'Rider',
+                value: row.username,
               ),
-              const SizedBox(height: 12),
-              Text('Lat: ${row.lat.toStringAsFixed(6)}'),
-              Text('Lng: ${row.lng.toStringAsFixed(6)}'),
-              if (row.recordedAt != null)
-                Text(
-                  'Updated: ${df.format(row.recordedAt!)}',
-                  style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+              _DetailRow(
+                icon: Icons.location_on_outlined,
+                label: 'Coordinates',
+                value:
+                    '${row.lat.toStringAsFixed(6)}, ${row.lng.toStringAsFixed(6)}',
+              ),
+              if (row.accuracyM != null)
+                _DetailRow(
+                  icon: Icons.radar,
+                  label: 'GPS accuracy',
+                  value: '±${row.accuracyM!.toStringAsFixed(0)} m',
                 ),
-              const SizedBox(height: 12),
+              if (row.recordedAt != null)
+                _DetailRow(
+                  icon: Icons.access_time_rounded,
+                  label: 'Last seen',
+                  value: df.format(row.recordedAt!.toLocal()),
+                ),
+              const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: () {
                   Navigator.of(ctx).pop();
                   _mapController.move(LatLng(row.lat, row.lng), 17);
                 },
                 icon: const Icon(Icons.center_focus_strong),
-                label: const Text('Center on bike'),
+                label: const Text('Center on rider'),
               ),
             ],
           ),
@@ -261,45 +371,3 @@ class _AdminMapTabState extends State<AdminMapTab> {
     );
   }
 }
-
-class _AdminMarkerRow {
-  _AdminMarkerRow({
-    required this.rentalId,
-    required this.bikeCode,
-    required this.bikeLabel,
-    required this.lat,
-    required this.lng,
-    required this.recordedAt,
-  });
-
-  final String rentalId;
-  final String bikeCode;
-  final String bikeLabel;
-  final double lat;
-  final double lng;
-  final DateTime? recordedAt;
-
-  static _AdminMarkerRow? fromJoined(Map<String, dynamic> json) {
-    try {
-      final rentals = json['rentals'] as Map<String, dynamic>?;
-      final bikes = rentals?['bikes'] as Map<String, dynamic>?;
-      final code = (bikes?['code'] ?? '').toString();
-      if (code.trim().isEmpty) return null;
-
-      final label = (bikes?['label'] ?? '').toString().trim();
-      return _AdminMarkerRow(
-        rentalId: json['rental_id'].toString(),
-        bikeCode: code,
-        bikeLabel: label.isEmpty ? 'Bike $code' : label,
-        lat: (json['lat'] as num).toDouble(),
-        lng: (json['lng'] as num).toDouble(),
-        recordedAt: json['recorded_at'] == null
-            ? null
-            : DateTime.tryParse(json['recorded_at'].toString()),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-}
-

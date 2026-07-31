@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
 import '../utils/auth_validators.dart';
+import '../utils/error_message.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -19,6 +20,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _confirmPassword = TextEditingController();
   final _username = TextEditingController();
   final _otp = TextEditingController();
 
@@ -27,6 +29,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _debugDetails;
   bool _codeSent = false;
   bool _showPassword = false;
+  bool _showConfirmPassword = false;
   Timer? _sendCooldownTimer;
   DateTime? _nextSendAllowedAt;
 
@@ -35,26 +38,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _sendCooldownTimer?.cancel();
     _email.dispose();
     _password.dispose();
+    _confirmPassword.dispose();
     _username.dispose();
     _otp.dispose();
     super.dispose();
-  }
-
-  String? _otpValidator(String? v) {
-    final s = (v ?? '').trim();
-    if (!RegExp(r'^\d{6}$').hasMatch(s)) {
-      return 'Enter the 6-digit code from your Gmail';
-    }
-    return null;
-  }
-
-  String? _passwordValidator(String? v) {
-    final s = (v ?? '');
-    if (s.length < 6) return 'Use at least 6 characters';
-    if (!RegExp(r'[A-Za-z]').hasMatch(s) || !RegExp(r'\d').hasMatch(s)) {
-      return 'Use letters and numbers';
-    }
-    return null;
   }
 
   int get _cooldownSecondsLeft {
@@ -123,7 +110,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
         return;
       }
-      final msg = e.toString();
+      final raw = e.toString();
+      final msg = stripExceptionPrefix(raw);
       setState(() {
         _debugDetails = msg;
         if (msg.contains('over_email_send_rate_limit') || msg.contains('statusCode: 429')) {
@@ -168,9 +156,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      final raw = e.toString();
+      final msg = stripExceptionPrefix(raw);
       setState(() {
-        _error = e.toString();
-        _debugDetails = e.toString();
+        _error = msg;
+        _debugDetails = msg;
       });
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -228,18 +218,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Register',
+                                    'Create account',
                                     style: theme.textTheme.titleLarge?.copyWith(
                                       fontWeight: FontWeight.w900,
+                                      letterSpacing: -0.3,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'Get code emails a 6-digit OTP. Your Auth user is created only when '
-                                    'you tap Create account (same password you used for Get code).',
+                                    'Fill in your details, then verify your Gmail.',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: cs.onSurfaceVariant,
-                                      height: 1.35,
                                     ),
                                   ),
                                 ],
@@ -289,7 +278,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                             ),
                           ),
-                          validator: _passwordValidator,
+                          validator: AuthValidators.passwordRegister,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _confirmPassword,
+                          obscureText: !_showConfirmPassword,
+                          textInputAction: TextInputAction.next,
+                          enabled: !_codeSent,
+                          decoration: InputDecoration(
+                            labelText: 'Confirm password',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              tooltip: _showConfirmPassword
+                                  ? 'Hide password'
+                                  : 'Show password',
+                              onPressed: () => setState(
+                                () => _showConfirmPassword = !_showConfirmPassword,
+                              ),
+                              icon: Icon(
+                                _showConfirmPassword
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                              ),
+                            ),
+                          ),
+                          validator: (v) => AuthValidators.confirmPasswordMatches(
+                                v,
+                                _password.text,
+                              ),
                         ),
                         const SizedBox(height: 12),
                         TextFormField(
@@ -314,7 +331,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                             ),
                           ),
-                          validator: _codeSent ? _otpValidator : null,
+                          validator: _codeSent ? AuthValidators.otp6 : null,
                           onTap: () {
                             if (!_codeSent && !_busy) {
                               FocusScope.of(context).unfocus();
@@ -325,11 +342,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         if (_codeSent) ...[
                           const SizedBox(height: 8),
                           Text(
-                            'Use the same password as above when you tap Create account—the server checks '
-                            'it matches what you used for Get code.',
+                            'Enter the 6-digit code sent to your Gmail.',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: cs.onSurfaceVariant,
-                              height: 1.35,
                             ),
                           ),
                         ],

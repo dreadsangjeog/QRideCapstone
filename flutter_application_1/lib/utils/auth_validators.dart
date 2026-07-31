@@ -30,4 +30,38 @@ class AuthValidators {
     return null;
   }
 
+  static final _otp6 = RegExp(r'^\d{6}$');
+
+  /// 6-digit Gmail / recovery OTP from Supabase.
+  static String? otp6(String? v) {
+    final s = (v ?? '').trim();
+    if (!_otp6.hasMatch(s)) {
+      return 'Enter the 6-digit code from your Gmail';
+    }
+    return null;
+  }
+
+  /// Registration: min 6 chars, letters + digits.
+  static String? passwordRegister(String? v) {
+    final s = (v ?? '');
+    if (s.length < 6) return 'Use at least 6 characters';
+    if (!RegExp(r'[A-Za-z]').hasMatch(s) || !RegExp(r'\d').hasMatch(s)) {
+      return 'Use letters and numbers';
+    }
+    return null;
+  }
+
+  /// Simple minimum length (e.g. password reset).
+  static String? passwordMin6(String? v) {
+    final s = (v ?? '');
+    if (s.length < 6) return 'Min 6 characters';
+    return null;
+  }
+
+  static String? confirmPasswordMatches(String? v, String other) {
+    if ((v ?? '').isEmpty) return 'Please confirm your password';
+    if (v != other) return 'Passwords do not match';
+    return null;
+  }
 }
+

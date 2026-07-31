@@ -1,95 +1,60 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
+import '../models/rental_history_row.dart';
+import '../services/rental_repository.dart';
 import '../widgets/user_portal_chrome.dart';
 
-class UserHistoryScreen extends StatelessWidget {
+part 'user_history_widgets.dart';
+
+class UserHistoryScreen extends StatefulWidget {
   const UserHistoryScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+  State<UserHistoryScreen> createState() => _UserHistoryScreenState();
+}
 
+class _UserHistoryScreenState extends State<UserHistoryScreen> {
+  final _repo = RentalRepository();
+  late Future<List<RentalHistoryRow>> _future = _load();
+
+  Future<List<RentalHistoryRow>> _load() => _repo.fetchMyRentalHistory();
+
+  Future<void> _refresh() async {
+    setState(() => _future = _load());
+    await _future;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return UserPortalScaffold(
-      title: 'Rental history',
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight - 24),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 88,
-                      height: 88,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: cs.surface.withValues(alpha: 0.72),
-                        border: Border.all(
-                          color: cs.secondary.withValues(alpha: 0.2),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            blurRadius: 28,
-                            offset: const Offset(0, 12),
-                            color: cs.secondary.withValues(alpha: 0.1),
-                          ),
-                        ],
-                      ),
-                      child: Container(
-                        margin: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: cs.secondaryContainer.withValues(alpha: 0.65),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.history_rounded,
-                          size: 40,
-                          color: cs.onSecondaryContainer,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'No rentals yet',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Completed rentals will appear here with dates, bikes, and duration.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: cs.onSurfaceVariant,
-                        height: 1.45,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 28),
-                    FilledButton.tonalIcon(
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () {
-                        // Placeholder until history is wired to Supabase.
-                      },
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: const Text('Refresh'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+      title: 'Rental History',
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: FutureBuilder<List<RentalHistoryRow>>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return _ErrorView(
+                error: snapshot.error,
+                onRetry: _refresh,
+              );
+            }
+            final items = snapshot.data ?? [];
+            if (items.isEmpty) {
+              return _EmptyView(onRefresh: _refresh);
+            }
+            return ListView.separated(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+              itemCount: items.length,
+              separatorBuilder: (context, _) => const SizedBox(height: 10),
+              itemBuilder: (context, i) => _HistoryCard(item: items[i]),
+            );
+          },
+        ),
       ),
     );
   }
