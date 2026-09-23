@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../theme/brand.dart';
+import 'qride_brand.dart';
+
 /// Login / marketing gradient behind [SafeArea] content.
 class AuthGradientBackground extends StatelessWidget {
   const AuthGradientBackground({super.key, required this.child});
@@ -8,32 +11,13 @@ class AuthGradientBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            cs.primary.withValues(alpha: 0.12),
-            cs.surface,
-            cs.secondary.withValues(alpha: 0.10),
-          ],
-          stops: const [0.0, 0.55, 1.0],
-        ),
-      ),
-      child: child,
-    );
+    return QrideBrandBackdrop(child: child);
   }
 }
 
-/// Bike icon + “QRide” title + Scan / Ride / Return tagline.
+/// Launcher bike icon + “QRide” title + Scan / Ride / Return tagline.
 class AuthBrandHeader extends StatelessWidget {
   const AuthBrandHeader({super.key});
-
-  static const Color brandGradientStart = Color(0xFF4A90E2);
-  static const Color brandGradientMid = Color(0xFF007AFF);
-  static const Color brandGradientEnd = Color(0xFF38B6FF);
 
   @override
   Widget build(BuildContext context) {
@@ -42,33 +26,15 @@ class AuthBrandHeader extends StatelessWidget {
     return Column(
       children: [
         const SizedBox(height: 12),
-        Center(
-          child: Container(
-            width: 76,
-            height: 76,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: [brandGradientStart, brandGradientMid],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: brandGradientMid.withValues(alpha: 0.35),
-                  blurRadius: 22,
-                  offset: const Offset(0, 9),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.directions_bike_rounded,
-                color: Colors.white, size: 38),
-          ),
-        ),
+        const QrideBikeMark(size: 88),
         const SizedBox(height: 16),
         ShaderMask(
           shaderCallback: (bounds) => const LinearGradient(
-            colors: [brandGradientStart, brandGradientMid, brandGradientEnd],
+            colors: [
+              QrideBrand.accentSoft,
+              QrideBrand.accent,
+              QrideBrand.accentDeep,
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ).createShader(bounds),
@@ -87,32 +53,38 @@ class AuthBrandHeader extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _TagDot(color: brandGradientStart),
+            const _TagDot(color: QrideBrand.accentSoft),
             const SizedBox(width: 6),
-            Text('Scan',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
-                )),
+            Text(
+              'Scan',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
             const SizedBox(width: 10),
-            _TagDot(color: brandGradientMid),
+            const _TagDot(color: QrideBrand.accent),
             const SizedBox(width: 6),
-            Text('Ride',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
-                )),
+            Text(
+              'Ride',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
             const SizedBox(width: 10),
-            _TagDot(color: brandGradientEnd),
+            const _TagDot(color: QrideBrand.accentDeep),
             const SizedBox(width: 6),
-            Text('Return',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
-                )),
+            Text(
+              'Return',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 28),

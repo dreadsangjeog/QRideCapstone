@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth_service.dart';
+import '../theme/brand.dart';
 import '../utils/auth_validators.dart';
 import '../utils/error_message.dart';
 import '../widgets/auth_branding.dart';
 import 'forgot_password_screen.dart';
+import 'legal/terms_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -112,8 +114,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   decoration: BoxDecoration(
                                     gradient: const LinearGradient(
                                       colors: [
-                                        AuthBrandHeader.brandGradientStart,
-                                        AuthBrandHeader.brandGradientEnd,
+                                        QrideBrand.accentSoft,
+                                        QrideBrand.accent,
                                       ],
                                       begin: Alignment.topCenter,
                                       end: Alignment.bottomCenter,
@@ -248,14 +250,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Text(
-                      'By continuing, you agree to follow campus ride rules.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.textTheme.bodySmall?.color
-                            ?.withValues(alpha: 0.7),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+                    const TermsFooterLink(),
                     const SizedBox(height: 12),
                   ],
                 ),

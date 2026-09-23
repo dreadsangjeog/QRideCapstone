@@ -246,6 +246,50 @@ class AuthService {
     );
   }
 
+  /// Permanently deletes the signed-in rider (RPC `delete_my_account`).
+  /// Fails if the user has a pending/active rental or is an admin.
+  static Future<void> deleteMyAccount() async {
+    try {
+      await SupabaseClientProvider.client
+          .rpc('delete_my_account')
+          .timeout(const Duration(seconds: 20));
+    } on PostgrestException catch (e) {
+      throw Exception(_deleteAccountMessage(e.message, e.code));
+    } on FunctionException catch (e) {
+      final d = e.details;
+      final msg = d is Map && d['error'] is String
+          ? d['error'] as String
+          : e.toString();
+      throw Exception(_deleteAccountMessage(msg, null));
+    } on TimeoutException {
+      throw Exception(
+        'Account deletion timed out. Check your connection and try again.',
+      );
+    }
+    try {
+      await signOut();
+    } catch (_) {}
+  }
+
+  static String _deleteAccountMessage(String message, String? code) {
+    final m = message.toLowerCase();
+    if (m.contains('open_rental')) {
+      return 'Return the bike and wait until the rental has ended before deleting your account.';
+    }
+    if (m.contains('admin_cannot_self_delete')) {
+      return 'Admin accounts cannot be deleted from the rider app.';
+    }
+    if (m.contains('not_signed_in')) {
+      return 'Please log in again, then delete your account.';
+    }
+    if (m.contains('could not find the function') ||
+        m.contains('does not exist') ||
+        code == 'PGRST202') {
+      return 'Account deletion is not enabled on the server yet. Run delete_my_account.sql in Supabase.';
+    }
+    return message.isEmpty ? 'Could not delete account' : message;
+  }
+
   static Future<bool> isAdmin() async {
     final uid = SupabaseClientProvider.client.auth.currentUser?.id;
     if (uid == null) return false;

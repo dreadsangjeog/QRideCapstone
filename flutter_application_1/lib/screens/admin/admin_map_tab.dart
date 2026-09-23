@@ -5,8 +5,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/admin_repository.dart';
+import '../../services/notification_repository.dart';
+import '../../services/notification_service.dart';
+import '../../services/supabase_client.dart';
+import '../../widgets/heading_map_pin.dart';
+import '../../widgets/qride_map_tiles.dart';
 
 part 'admin_map_models.dart';
 part 'admin_map_widgets.dart';
@@ -28,9 +34,15 @@ class _AdminMapTabState extends State<AdminMapTab> {
   bool _centeredOnAdmin = false;
 
   List<_MarkerRow> _riders = [];
+  final Map<String, SmoothLatLng> _poses = {};
   bool _loadingRiders = false;
   DateTime? _lastRefresh;
   Timer? _refreshTimer;
+  Timer? _smoothTimer;
+  Timer? _staleTimer;
+  RealtimeChannel? _locationChannel;
+  final Set<String> _offlineNotified = {};
+  final _notifRepo = NotificationRepository();
 
   bool _mapReady = false;
 
@@ -39,18 +51,48 @@ class _AdminMapTabState extends State<AdminMapTab> {
     super.initState();
     _startAdminLocation();
     _loadRiders();
+    _subscribeRiderLocations();
+    _smoothTimer = Timer.periodic(const Duration(milliseconds: 40), (_) {
+      var moved = false;
+      for (final p in _poses.values) {
+        if (p.tick()) moved = true;
+      }
+      if (moved && mounted) setState(() {});
+    });
     _refreshTimer = Timer.periodic(
-      const Duration(seconds: 15),
+      const Duration(seconds: 3),
       (_) {
         if (mounted) _loadRiders(silent: true);
       },
     );
+    _staleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+      _notifyNewlyOffline();
+    });
+  }
+
+  void _subscribeRiderLocations() {
+    _locationChannel = SupabaseClientProvider.client
+        .channel('admin-rider-locations')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'rental_last_location',
+          callback: (_) {
+            if (mounted) _loadRiders(silent: true);
+          },
+        )
+        .subscribe();
   }
 
   @override
   void dispose() {
     _locationSub?.cancel();
     _refreshTimer?.cancel();
+    _smoothTimer?.cancel();
+    _staleTimer?.cancel();
+    _locationChannel?.unsubscribe();
     _mapController.dispose();
     super.dispose();
   }
@@ -103,14 +145,59 @@ class _AdminMapTabState extends State<AdminMapTab> {
           .whereType<_MarkerRow>()
           .toList();
       if (!mounted) return;
+      final ids = parsed.map((r) => r.rentalId).toSet();
+      for (final r in parsed) {
+        final pose = _poses.putIfAbsent(
+          r.rentalId,
+          () => SmoothLatLng(LatLng(r.lat, r.lng)),
+        );
+        pose.setTarget(LatLng(r.lat, r.lng), r.heading);
+      }
+      _poses.removeWhere((id, _) => !ids.contains(id));
+      _offlineNotified.removeWhere((id) => !ids.contains(id));
       setState(() {
         _riders = parsed;
         _loadingRiders = false;
         _lastRefresh = DateTime.now();
       });
+      _notifyNewlyOffline();
     } catch (_) {
       if (!mounted) return;
       setState(() => _loadingRiders = false);
+    }
+  }
+
+  void _notifyNewlyOffline() {
+    for (final r in _riders) {
+      if (!r.isStale) {
+        _offlineNotified.remove(r.rentalId);
+        continue;
+      }
+      if (!_offlineNotified.add(r.rentalId)) continue;
+      final body =
+          '${r.username} on ${r.bikeLabel} lost signal. Last point is still on the map.';
+      unawaited(
+        _notifRepo.notifyAdmins(
+          type: 'rider_offline',
+          title: 'Rider lost signal',
+          body: body,
+          data: {'rental_id': r.rentalId, 'username': r.username},
+        ),
+      );
+      unawaited(
+        NotificationService.showInboxBanner(
+          AppNotification(
+            id: 'local-offline-${r.rentalId}',
+            userId: '',
+            roleScope: 'admin',
+            type: 'rider_offline',
+            title: 'Rider lost signal',
+            body: body,
+            data: const {},
+            createdAt: DateTime.now().toUtc(),
+          ),
+        ),
+      );
     }
   }
 
@@ -123,14 +210,50 @@ class _AdminMapTabState extends State<AdminMapTab> {
         ? LatLng(_adminPos!.latitude, _adminPos!.longitude)
         : const LatLng(14.5995, 120.9842);
 
-    final riderMarkers = _riders.map((r) {
+    final liveCount = _riders.where((r) => !r.isStale).length;
+    final staleCount = _riders.length - liveCount;
+
+    final riderMarkers = _poses.entries.map((e) {
+      _MarkerRow? row;
+      for (final r in _riders) {
+        if (r.rentalId == e.key) {
+          row = r;
+          break;
+        }
+      }
+      final stale = row?.isStale ?? true;
       return Marker(
-        width: 46,
-        height: 46,
-        point: LatLng(r.lat, r.lng),
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        point: e.value.current,
         child: GestureDetector(
-          onTap: () => _showRiderDetails(r),
-          child: _RiderDot(cs: cs),
+          onTap: row == null ? null : () => _showRiderDetails(row!),
+          child: Opacity(
+            opacity: stale ? 0.55 : 1,
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                HeadingChevron(
+                  headingDeg: e.value.heading,
+                  color: stale ? cs.outline : cs.error,
+                  size: 20,
+                ),
+                if (stale)
+                  const Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Icon(
+                      Icons.signal_wifi_off_rounded,
+                      size: 10,
+                      color: Colors.white,
+                      shadows: [Shadow(blurRadius: 3, color: Colors.black54)],
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       );
     }).toList();
@@ -187,14 +310,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
             },
           ),
           children: [
-            TileLayer(
-              urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              userAgentPackageName: 'com.qride.demo',
-              maxZoom: 20,
-              retinaMode: true,
-            ),
+            qrideStreetTiles(),
             CircleLayer(circles: adminCircles),
             MarkerLayer(markers: riderMarkers),
             MarkerLayer(markers: adminMarkers),
@@ -206,6 +322,8 @@ class _AdminMapTabState extends State<AdminMapTab> {
           right: 12,
           child: _StatusCard(
             riderCount: _riders.length,
+            liveCount: liveCount,
+            staleCount: staleCount,
             lastRefresh: _lastRefresh,
             loading: _loadingRiders,
             hasAdminGps: _adminPos != null,
@@ -218,10 +336,10 @@ class _AdminMapTabState extends State<AdminMapTab> {
                     ),
           ),
         ),
-        const Positioned(
+        Positioned(
           bottom: 16,
           left: 12,
-          child: _Legend(),
+          child: _Legend(errorColor: cs.error),
         ),
         Positioned(
           bottom: 16,
@@ -349,10 +467,17 @@ class _AdminMapTabState extends State<AdminMapTab> {
                   label: 'GPS accuracy',
                   value: '±${row.accuracyM!.toStringAsFixed(0)} m',
                 ),
+              _DetailRow(
+                icon: row.isStale
+                    ? Icons.signal_wifi_off_rounded
+                    : Icons.sensors_rounded,
+                label: 'Signal',
+                value: row.freshnessLabel,
+              ),
               if (row.recordedAt != null)
                 _DetailRow(
                   icon: Icons.access_time_rounded,
-                  label: 'Last seen',
+                  label: 'Last ping',
                   value: df.format(row.recordedAt!.toLocal()),
                 ),
               const SizedBox(height: 16),

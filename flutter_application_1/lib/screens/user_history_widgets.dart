@@ -30,8 +30,7 @@ class _HistoryCard extends StatelessWidget {
     final cost = r.actualCost ?? r.estimatedCost;
     final penalty = r.penaltyFee ?? 0.0;
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return PolishedSectionCard(
       child: IntrinsicHeight(
         child: Row(
           children: [

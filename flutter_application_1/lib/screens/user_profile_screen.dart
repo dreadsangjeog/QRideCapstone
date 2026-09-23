@@ -9,6 +9,9 @@ import '../services/auth_service.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_generate_qr_screen.dart';
+import '../utils/logout_guard.dart';
+import 'legal/terms_screen.dart';
+import 'notification_settings_screen.dart';
 
 part 'user_profile_widgets.dart';
 
@@ -82,6 +85,21 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
             children: [
+              Text(
+                'Your account',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.6,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Manage alerts, theme, and sign-out from here.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 18),
               PolishedSectionCard(
                 child: Padding(
                   padding: const EdgeInsets.all(20),
@@ -178,16 +196,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         vertical: 4,
                       ),
                       leading: Icon(
-                        Icons.notifications_active_rounded,
+                        Icons.notifications_outlined,
                         color: cs.primary,
                       ),
-                      title: const Text('Notifications'),
+                      title: const Text('Notification settings'),
                       subtitle: Text(
-                        'Rental alerts are active',
+                        'Sound, vibration, and banners',
                         style: TextStyle(
-                          color: cs.primary,
+                          color: cs.onSurfaceVariant,
                           fontSize: 13,
-                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       trailing: Icon(
@@ -195,51 +212,45 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                       ),
                       onTap: () {
-                        showDialog<void>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            icon: Icon(
-                              Icons.notifications_active_rounded,
-                              color: cs.primary,
-                              size: 32,
-                            ),
-                            title: const Text('Rental notifications'),
-                            content: const Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'You will automatically receive alerts for:',
-                                ),
-                                SizedBox(height: 12),
-                                _NotifRow(
-                                  icon: Icons.check_circle_outline,
-                                  text: 'Rental approved by admin',
-                                ),
-                                _NotifRow(
-                                  icon: Icons.timer_outlined,
-                                  text: '5-minute warning before time runs out',
-                                ),
-                                _NotifRow(
-                                  icon: Icons.warning_amber_rounded,
-                                  text: 'Overtime started — penalty accruing',
-                                ),
-                                _NotifRow(
-                                  icon: Icons.receipt_long_outlined,
-                                  text: 'Rental ended with cost receipt',
-                                ),
-                                _NotifRow(
-                                  icon: Icons.cancel_outlined,
-                                  text: 'Rental request declined',
-                                ),
-                              ],
-                            ),
-                            actions: [
-                              FilledButton(
-                                onPressed: () => Navigator.of(ctx).pop(),
-                                child: const Text('Got it'),
-                              ),
-                            ],
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                const NotificationSettingsScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    Divider(
+                      height: 1,
+                      indent: 18,
+                      endIndent: 18,
+                      color: cs.outlineVariant.withValues(alpha: 0.45),
+                    ),
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 4,
+                      ),
+                      leading: Icon(
+                        Icons.gavel_outlined,
+                        color: cs.primary,
+                      ),
+                      title: const Text('Terms & privacy'),
+                      subtitle: Text(
+                        'Rental rules, logout warning, and data use',
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right_rounded,
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                      ),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const TermsScreen(),
                           ),
                         );
                       },
@@ -400,61 +411,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 ),
               ],
               const SizedBox(height: 24),
-              Material(
-                color: cs.errorContainer.withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: cs.error.withValues(alpha: 0.28),
+              const PortalSectionLabel('Account'),
+              PolishedSectionCard(
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 8,
+                  ),
+                  leading: Icon(Icons.logout_rounded, color: cs.error),
+                  title: Text(
+                    'Log out',
+                    style: TextStyle(
+                      color: cs.error,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 12,
+                  subtitle: Text(
+                    'Stay signed out on this device',
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 13,
                     ),
-                    leading: Icon(Icons.logout_rounded, color: cs.error),
-                    title: Text(
-                      'Log out',
-                      style: TextStyle(
-                        color: cs.error,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    onTap: () async {
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          icon: Icon(
-                            Icons.logout_rounded,
-                            color: cs.error,
-                            size: 28,
-                          ),
-                          title: const Text('Log out?'),
-                          content: const Text(
-                            'You will be returned to the login screen.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(ctx).pop(false),
-                              child: const Text('Cancel'),
-                            ),
-                            FilledButton(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: cs.error,
-                                foregroundColor: cs.onError,
-                              ),
-                              onPressed: () => Navigator.of(ctx).pop(true),
-                              child: const Text('Log out'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (confirmed == true) await AuthService.signOut();
-                    },
                   ),
+                  onTap: () => confirmAndSignOut(context),
                 ),
               ),
             ],

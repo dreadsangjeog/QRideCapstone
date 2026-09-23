@@ -6,6 +6,7 @@ class RentalLocation {
     required this.lng,
     required this.accuracyM,
     required this.recordedAt,
+    this.heading,
   });
 
   final String rentalId;
@@ -14,6 +15,7 @@ class RentalLocation {
   final double lng;
   final double? accuracyM;
   final DateTime recordedAt;
+  final double? heading;
 
   factory RentalLocation.fromJson(Map<String, dynamic> json) {
     return RentalLocation(
@@ -25,6 +27,9 @@ class RentalLocation {
           ? null
           : (json['accuracy_m'] as num).toDouble(),
       recordedAt: DateTime.parse(json['recorded_at'].toString()),
+      heading: json['heading'] == null
+          ? null
+          : (json['heading'] as num).toDouble(),
     );
   }
 }

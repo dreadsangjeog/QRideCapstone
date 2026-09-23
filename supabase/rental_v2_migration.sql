@@ -56,6 +56,14 @@ BEGIN
   END IF;
 
   IF NOT EXISTS (
+    SELECT 1
+    FROM public.profiles
+    WHERE id = auth.uid() AND verification_status = 'verified'
+  ) THEN
+    RAISE EXCEPTION 'kyc_not_verified';
+  END IF;
+
+  IF NOT EXISTS (
     SELECT 1 FROM public.bikes WHERE id = p_bike_id AND status = 'available'
   ) THEN
     RAISE EXCEPTION 'bike_not_available';

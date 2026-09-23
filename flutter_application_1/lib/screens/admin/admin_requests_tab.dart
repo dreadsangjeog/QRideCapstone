@@ -6,11 +6,16 @@ import '../../services/admin_repository.dart';
 
 part 'admin_requests_widgets.dart';
 
-/// Shows pending rental requests that need admin approval or rejection.
+/// Shows pending rental requests that need admin approval.
 class AdminRequestsTab extends StatefulWidget {
-  const AdminRequestsTab({super.key, required this.repo});
+  const AdminRequestsTab({
+    super.key,
+    required this.repo,
+    this.onQueueChanged,
+  });
 
   final AdminRepository repo;
+  final Future<void> Function()? onQueueChanged;
 
   @override
   State<AdminRequestsTab> createState() => AdminRequestsTabState();
@@ -24,6 +29,7 @@ class AdminRequestsTabState extends State<AdminRequestsTab> {
   Future<void> refresh() async {
     setState(() => _future = _load());
     await _future;
+    await widget.onQueueChanged?.call();
   }
 
   Future<void> _approve(RentalWithBike row) async {
@@ -35,47 +41,6 @@ class AdminRequestsTabState extends State<AdminRequestsTab> {
           content: Text('Approved rental for ${row.riderDisplay}'),
           backgroundColor: Theme.of(context).colorScheme.primary,
         ),
-      );
-      await refresh();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    }
-  }
-
-  Future<void> _reject(RentalWithBike row) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Reject request?'),
-        content: Text(
-          'This will free the bike and notify ${row.riderDisplay} that their request was declined.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
-              foregroundColor: Theme.of(ctx).colorScheme.onError,
-            ),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Reject'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    try {
-      await widget.repo.rejectRental(row.rental.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Request rejected')),
       );
       await refresh();
     } catch (e) {
@@ -140,7 +105,7 @@ class AdminRequestsTabState extends State<AdminRequestsTab> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'When a rider requests a bike, it will appear here for your approval.',
+                        'When a rider requests a bike, it will appear here for you to accept.',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
@@ -170,7 +135,6 @@ class AdminRequestsTabState extends State<AdminRequestsTab> {
             itemBuilder: (context, i) => _RequestCard(
               row: requests[i],
               onApprove: () => _approve(requests[i]),
-              onReject: () => _reject(requests[i]),
             ),
           );
         },

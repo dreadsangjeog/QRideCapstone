@@ -444,36 +444,48 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                       },
                     ),
                     const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      key: ValueKey(_status),
-                      initialValue: _status,
-                      decoration: const InputDecoration(
-                        labelText: 'Status',
-                        border: OutlineInputBorder(),
-                        helperText: 'New bikes are usually Available.',
+                    if (_status == 'rented')
+                      InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Status',
+                          border: OutlineInputBorder(),
+                          helperText:
+                              'Rented is set automatically when a rider’s request is approved.',
+                        ),
+                        child: Text(
+                          'Rented',
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      )
+                    else
+                      DropdownButtonFormField<String>(
+                        key: ValueKey(_status),
+                        initialValue:
+                            _status == 'maintenance' ? 'maintenance' : 'available',
+                        decoration: const InputDecoration(
+                          labelText: 'Status',
+                          border: OutlineInputBorder(),
+                          helperText:
+                              'New bikes start as Available. Rented is set when a rider rents.',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'available',
+                            child: Text('Available'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'maintenance',
+                            child: Text('Maintenance'),
+                          ),
+                        ],
+                        onChanged: _fieldsLocked
+                            ? null
+                            : (v) {
+                                if (v != null) {
+                                  setState(() => _status = v);
+                                }
+                              },
                       ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'available',
-                          child: Text('Available'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'rented',
-                          child: Text('Rented'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'maintenance',
-                          child: Text('Maintenance'),
-                        ),
-                      ],
-                      onChanged: _fieldsLocked
-                          ? null
-                          : (v) {
-                              if (v != null) {
-                                setState(() => _status = v);
-                              }
-                            },
-                    ),
                     if (!_isExisting) ...[
                       const SizedBox(height: 20),
                       FilledButton.icon(

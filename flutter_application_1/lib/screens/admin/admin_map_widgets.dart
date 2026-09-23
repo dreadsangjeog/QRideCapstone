@@ -1,40 +1,12 @@
 part of 'admin_map_tab.dart';
 
-// ── Rider dot (red) ───────────────────────────────────────────────────────────
-
-class _RiderDot extends StatelessWidget {
-  const _RiderDot({required this.cs});
-  final ColorScheme cs;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.error,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Icon(
-        Icons.directions_bike_rounded,
-        size: 20,
-        color: cs.onError,
-      ),
-    );
-  }
-}
-
 // ── Status card overlay ───────────────────────────────────────────────────────
 
 class _StatusCard extends StatelessWidget {
   const _StatusCard({
     required this.riderCount,
+    required this.liveCount,
+    required this.staleCount,
     required this.lastRefresh,
     required this.loading,
     required this.hasAdminGps,
@@ -43,6 +15,8 @@ class _StatusCard extends StatelessWidget {
   });
 
   final int riderCount;
+  final int liveCount;
+  final int staleCount;
   final DateTime? lastRefresh;
   final bool loading;
   final bool hasAdminGps;
@@ -56,6 +30,17 @@ class _StatusCard extends StatelessWidget {
     final tf = lastRefresh != null
         ? DateFormat('h:mm:ss a').format(lastRefresh!.toLocal())
         : null;
+
+    String title;
+    if (riderCount == 0) {
+      title = 'No active riders';
+    } else if (staleCount == 0) {
+      title = '$liveCount rider${liveCount == 1 ? '' : 's'} live';
+    } else if (liveCount == 0) {
+      title = '$staleCount rider${staleCount == 1 ? '' : 's'} offline';
+    } else {
+      title = '$liveCount live · $staleCount no signal';
+    }
 
     return Material(
       elevation: 4,
@@ -71,7 +56,11 @@ class _StatusCard extends StatelessWidget {
               height: 10,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: riderCount > 0 ? cs.error : cs.onSurfaceVariant,
+                color: liveCount > 0
+                    ? cs.error
+                    : staleCount > 0
+                        ? cs.outline
+                        : cs.onSurfaceVariant,
               ),
             ),
             const SizedBox(width: 10),
@@ -81,15 +70,13 @@ class _StatusCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    riderCount == 0
-                        ? 'No active riders'
-                        : '$riderCount rider${riderCount == 1 ? '' : 's'} live',
+                    title,
                     style: theme.textTheme.labelLarge
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   if (tf != null)
                     Text(
-                      'Updated $tf',
+                      'Polled $tf',
                       style: theme.textTheme.labelSmall
                           ?.copyWith(color: cs.onSurfaceVariant),
                     ),
@@ -135,7 +122,10 @@ class _StatusCard extends StatelessWidget {
 // ── Legend ────────────────────────────────────────────────────────────────────
 
 class _Legend extends StatelessWidget {
-  const _Legend();
+  const _Legend({required this.errorColor});
+
+  final Color errorColor;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -153,7 +143,9 @@ class _Legend extends StatelessWidget {
           children: [
             _LegendRow(color: const Color(0xFF1A73E8), label: 'You (admin)'),
             const SizedBox(height: 4),
-            _LegendRow(color: cs.error, label: 'Active rider'),
+            _LegendRow(color: errorColor, label: 'Rider live'),
+            const SizedBox(height: 4),
+            _LegendRow(color: cs.outline, label: 'No signal (idle)'),
           ],
         ),
       ),
@@ -280,7 +272,6 @@ class _RidersListSheetState extends State<_RidersListSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final df = DateFormat('h:mm a');
     final filtered = _filtered;
 
     return Column(
@@ -386,12 +377,18 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                 width: 44,
                                 height: 44,
                                 decoration: BoxDecoration(
-                                  color: cs.errorContainer,
+                                  color: r.isStale
+                                      ? cs.surfaceContainerHighest
+                                      : cs.errorContainer,
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
-                                  Icons.directions_bike_rounded,
-                                  color: cs.onErrorContainer,
+                                  r.isStale
+                                      ? Icons.signal_wifi_off_rounded
+                                      : Icons.directions_bike_rounded,
+                                  color: r.isStale
+                                      ? cs.onSurfaceVariant
+                                      : cs.onErrorContainer,
                                   size: 22,
                                 ),
                               ),
@@ -417,43 +414,17 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                       ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    if (r.recordedAt != null) ...[
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.access_time_rounded,
-                                            size: 12,
-                                            color: cs.onSurfaceVariant,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            df.format(r.recordedAt!.toLocal()),
-                                            style: theme.textTheme.labelSmall
-                                                ?.copyWith(
-                                              color: cs.onSurfaceVariant,
-                                            ),
-                                          ),
-                                          if (r.accuracyM != null) ...[
-                                            const SizedBox(width: 8),
-                                            Icon(
-                                              Icons.gps_fixed,
-                                              size: 12,
-                                              color: cs.onSurfaceVariant,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              '±${r.accuracyM!.toStringAsFixed(0)}m',
-                                              style: theme
-                                                  .textTheme.labelSmall
-                                                  ?.copyWith(
-                                                color: cs.onSurfaceVariant,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      r.freshnessLabel,
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                        color: r.isStale
+                                            ? cs.error
+                                            : const Color(0xFF34C759),
+                                        fontWeight: FontWeight.w700,
                                       ),
-                                    ],
+                                    ),
                                   ],
                                 ),
                               ),

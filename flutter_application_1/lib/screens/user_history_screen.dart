@@ -28,7 +28,7 @@ class _UserHistoryScreenState extends State<UserHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return UserPortalScaffold(
-      title: 'Rental History',
+      title: 'History',
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<List<RentalHistoryRow>>(

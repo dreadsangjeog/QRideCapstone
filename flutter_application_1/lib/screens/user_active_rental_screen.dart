@@ -10,9 +10,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/rental.dart';
 import '../services/auth_service.dart';
 import '../services/location_tracking_service.dart';
+import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
 import '../services/rental_repository.dart';
 import '../services/supabase_client.dart';
+import '../widgets/heading_map_pin.dart';
+import '../widgets/qride_map_tiles.dart';
 import '../widgets/user_portal_chrome.dart';
 
 part 'user_active_rental_widgets.dart';
@@ -32,7 +35,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   // Live map
   final _mapController = MapController();
   bool _mapReady = false;
-  bool _autoCentered = false;
+  bool _followUser = true;
 
   Rental? _rental;
   bool _loading = true;
@@ -41,11 +44,11 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   Timer? _ticker;
   DateTime _now = DateTime.now();
 
-  // Notification sentinels
+  // Notification sentinels (timer warnings; approve/end via inbox Realtime)
   bool _notifiedApproved   = false;
   bool _notifiedFiveMin    = false;
   bool _notifiedOvertime   = false;
-  bool _notifiedEnded      = false;
+  bool _extending          = false;
 
   RealtimeChannel? _channel;
 
@@ -66,9 +69,13 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
 
   void _onPositionUpdate() {
     final pos = _tracking.position.value;
-    if (pos == null || !_mapReady || _autoCentered) return;
-    _autoCentered = true;
-    _mapController.move(LatLng(pos.latitude, pos.longitude), 16);
+    if (pos == null || !_mapReady || !_followUser) return;
+    final target = LatLng(pos.latitude, pos.longitude);
+    try {
+      _mapController.move(target, _mapController.camera.zoom);
+    } catch (_) {
+      _mapController.move(target, 16);
+    }
   }
 
   Future<void> _init() async {
@@ -117,30 +124,26 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   void _onRentalChange(Map<String, dynamic> record) {
     final updated = Rental.fromJson(record);
     if (!mounted) return;
+    final previous = _rental;
     setState(() => _rental = updated);
 
+    // Approve / reject / ended banners + inbox rows come from DB triggers
+    // via NotificationInboxController. This screen only drives GPS / UI.
     if (updated.isActive && !_notifiedApproved) {
       _notifiedApproved = true;
-      NotificationService.notifyApproved(
-        updated.bikeId, // bikeId used as fallback label
-      );
       unawaited(_startTracking(updated));
+    }
+
+    if (updated.isActive &&
+        previous != null &&
+        previous.isActive &&
+        updated.plannedMinutes > previous.plannedMinutes) {
+      _resetTimerSentinels(updated);
     }
 
     if (updated.isEnded || updated.isRejected) {
       _stopTracking();
       _ticker?.cancel();
-
-      if (updated.isEnded && !_notifiedEnded) {
-        _notifiedEnded = true;
-        NotificationService.notifyRentalEnded(
-          totalCost: updated.actualCost ?? 0,
-          penaltyFee: updated.penaltyFee ?? 0,
-        );
-      }
-      if (updated.isRejected) {
-        NotificationService.notifyRejected();
-      }
     }
   }
 
@@ -153,14 +156,10 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       _checkTimerNotifications();
     });
 
-    // React to GPS fixes by re-centering the map on the first one.
-    _tracking.position.removeListener(_onPositionUpdate);
-    _tracking.position.addListener(_onPositionUpdate);
-
     try {
       await _tracking.startTracking(
         rentalId: rental.id,
-        minInterval: const Duration(seconds: 15),
+        minInterval: const Duration(seconds: 3),
       );
     } catch (e) {
       if (!mounted) return;
@@ -186,17 +185,35 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     if (endTime == null) return;
 
     final remaining = endTime.difference(_now);
+    final inbox = NotificationRepository();
 
     if (!_notifiedFiveMin &&
         remaining.inSeconds <= 300 &&
         remaining.inSeconds > 0) {
       _notifiedFiveMin = true;
       NotificationService.notifyFiveMinuteWarning();
+      unawaited(
+        inbox.insertMine(
+          type: 'rental_five_min',
+          title: '5 minutes left',
+          body: 'Your rental is about to expire. Head back soon.',
+          data: {'rental_id': rental.id},
+        ),
+      );
     }
 
     if (!_notifiedOvertime && _now.isAfter(endTime)) {
       _notifiedOvertime = true;
       NotificationService.notifyOvertimeStarted();
+      unawaited(
+        inbox.insertMine(
+          type: 'rental_overtime',
+          title: 'Overtime — penalty accruing',
+          body:
+              'Your rental time has passed. A penalty fee is now being added.',
+          data: {'rental_id': rental.id},
+        ),
+      );
     }
   }
 
@@ -244,6 +261,55 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     }
   }
 
+  Future<void> _extendRental(Rental rental) async {
+    final extra = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _ExtendTimeSheet(
+        currentPlannedMinutes: rental.plannedMinutes,
+        ratePerHour: rental.ratePerHour,
+      ),
+    );
+    if (extra == null || !mounted) return;
+
+    setState(() => _extending = true);
+    try {
+      await _repo.extendRental(rentalId: rental.id, extraMinutes: extra);
+      final refreshed = await _repo.fetchRentalById(rental.id);
+      if (!mounted) return;
+      setState(() {
+        if (refreshed != null) _rental = refreshed;
+        _resetTimerSentinels(_rental ?? refreshed ?? rental);
+        _extending = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Extended by $extra min. New estimate ₱${(_rental!.estimatedCost ?? 0).toStringAsFixed(2)}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _extending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not extend: $e')),
+      );
+    }
+  }
+
+  void _resetTimerSentinels(Rental rental) {
+    final end = rental.scheduledEndTime;
+    if (end == null) return;
+    final remaining = end.difference(DateTime.now());
+    if (remaining.inSeconds > 300) {
+      _notifiedFiveMin = false;
+    }
+    if (!DateTime.now().isAfter(end)) {
+      _notifiedOvertime = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -278,15 +344,17 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
               child: Column(
                 children: [
                   Container(
-                    width: 72,
-                    height: 72,
+                    width: 76,
+                    height: 76,
                     decoration: BoxDecoration(
-                      color: cs.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: cs.outlineVariant),
+                      color: cs.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(22),
                     ),
-                    child: Icon(Icons.directions_bike_rounded,
-                        size: 36, color: cs.onSurfaceVariant),
+                    child: Icon(
+                      Icons.directions_bike_rounded,
+                      size: 36,
+                      color: cs.primary,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Text(
@@ -296,7 +364,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Scan a bike QR code from the Scan tab to request a rental.',
+                    'Tap Scan on the map, then point your camera at the bike QR or type the code.',
                     style: theme.textTheme.bodyMedium
                         ?.copyWith(color: cs.onSurfaceVariant, height: 1.4),
                     textAlign: TextAlign.center,
@@ -608,9 +676,26 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
 
                   const SizedBox(height: 12),
                   Text(
-                    'Admin will end your ride. Location updates are sent every 15 seconds.',
+                    'Admin will end your ride. Your live location and heading stay shared while you ride.',
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: cs.onSurfaceVariant, height: 1.4),
+                  ),
+                  const SizedBox(height: 14),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    onPressed: _extending ? null : () => _extendRental(rental),
+                    icon: _extending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.more_time_rounded),
+                    label: Text(
+                      _extending ? 'Extending…' : 'Extend time',
+                    ),
                   ),
                 ],
               ),
@@ -647,6 +732,12 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                       child: _RiderLiveMap(
                         controller: _mapController,
                         tracking: _tracking,
+                        followUser: _followUser,
+                        onFollowChanged: (v) {
+                          if (_followUser == v) return;
+                          setState(() => _followUser = v);
+                          if (v) _onPositionUpdate();
+                        },
                         onMapReady: () {
                           _mapReady = true;
                           _onPositionUpdate();

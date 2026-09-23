@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../screens/admin/admin_dashboard_screen.dart';
+import '../screens/kyc/kyc_gate.dart';
 import '../screens/login_screen.dart';
 import '../screens/user_root_shell.dart';
 import '../services/auth_service.dart';
@@ -48,6 +50,39 @@ class _AuthGateState extends State<AuthGate> {
     if (_isAdmin == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return _isAdmin! ? const AdminDashboardScreen() : const UserRootShell();
+    return _isAdmin!
+        ? const AdminDashboardScreen()
+        : kIsWeb
+            ? const _RiderWebBlocked()
+            : const KycGate(child: UserRootShell());
+  }
+}
+
+class _RiderWebBlocked extends StatelessWidget {
+  const _RiderWebBlocked();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('QRide Admin'),
+        actions: [
+          IconButton(
+            tooltip: 'Log out',
+            onPressed: AuthService.signOut,
+            icon: const Icon(Icons.logout_rounded),
+          ),
+        ],
+      ),
+      body: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'This website is for administrators only.\nRiders should use the QRide Android app to register, verify ID, and rent bikes.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
   }
 }

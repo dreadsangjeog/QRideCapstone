@@ -7,6 +7,7 @@ import 'app/bootstrap_error_screen.dart';
 import 'config/supabase_config.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
 import 'screens/forgot_password_screen.dart';
+import 'screens/legal/terms_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/user_root_shell.dart';
@@ -41,14 +42,8 @@ class QRideApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lightCs = ColorScheme.fromSeed(
-      seedColor: kQrideSeedColor,
-      brightness: Brightness.light,
-    );
-    final darkCs = ColorScheme.fromSeed(
-      seedColor: kQrideSeedColor,
-      brightness: Brightness.dark,
-    );
+    final lightCs = qrideLightScheme();
+    final darkCs = qrideDarkScheme();
 
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeNotifier,
@@ -62,6 +57,7 @@ class QRideApp extends StatelessWidget {
         routes: {
           LoginScreen.routeName: (_) => const LoginScreen(),
           RegisterScreen.routeName: (_) => const RegisterScreen(),
+          TermsScreen.routeName: (_) => const TermsScreen(),
           ForgotPasswordScreen.routeName: (_) => const ForgotPasswordScreen(),
           UserRootShell.routeName: (_) => const UserRootShell(),
           AdminDashboardScreen.routeName: (_) => const AdminDashboardScreen(),

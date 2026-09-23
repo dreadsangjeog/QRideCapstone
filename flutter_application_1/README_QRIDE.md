@@ -19,6 +19,24 @@ flutter pub get
 flutter run
 ```
 
+Admin **website** (public URL after you host it): see [`WEB_HOSTING.md`](WEB_HOSTING.md). Local preview (loads CanvasKit from your PC, not Google CDN):
+
+```bash
+flutter run -d chrome --no-web-resources-cdn
+```
+
+Plain `flutter run -d chrome` often dies with `Failed to fetch … canvaskit.js` / Roboto from `gstatic.com` if that network is blocked.
+
+## Notifications (inbox)
+
+Run [`../supabase/notifications.sql`](../supabase/notifications.sql) in the SQL Editor, then enable **Realtime** on `public.notifications` (Database → Replication). Riders and admins get an in-app history (bell icon). Approve/reject still works even if the rider is not on the Active tab.
+
+## Live map GPS
+
+Maps use **CARTO Voyager**. Get a free key (no CARTO account) at [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/) and paste it into `lib/config/map_config.dart` as `cartoBasemapKey`. Without it, tiles show **API KEY REQUIRED**.
+
+Run [`../supabase/location_heading.sql`](../supabase/location_heading.sql) so rider **heading** (facing direction) is stored. Enable Realtime on `rental_last_location` in Supabase **Database → Replication**.
+
 ## Auth rules (app)
 
 - **Register**: Gmail + **username** + password → **Send 6-digit code** to Gmail, then verify. Gmail is for anti-spam / recovery only.

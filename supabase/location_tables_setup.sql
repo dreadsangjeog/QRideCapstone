@@ -12,7 +12,8 @@ create table if not exists public.rental_locations (
   lat         double precision not null,
   lng         double precision not null,
   accuracy_m  double precision,
-  recorded_at timestamptz not null default now()
+  recorded_at timestamptz not null default now(),
+  heading     double precision
 );
 
 create index if not exists rental_locations_rental_time_idx
@@ -25,7 +26,8 @@ create table if not exists public.rental_last_location (
   lat         double precision not null,
   lng         double precision not null,
   accuracy_m  double precision,
-  recorded_at timestamptz not null
+  recorded_at timestamptz not null,
+  heading     double precision
 );
 
 create index if not exists rental_last_location_user_idx
@@ -92,6 +94,15 @@ create policy "rental_last_location_update"
   to authenticated
   using  (user_id = auth.uid() and public.user_has_active_rental(rental_id))
   with check (user_id = auth.uid() and public.user_has_active_rental(rental_id));
+
+-- 7. Realtime so the admin map can move every few seconds without waiting on poll.
+alter table public.rental_last_location replica identity full;
+do $$
+begin
+  alter publication supabase_realtime add table public.rental_last_location;
+exception
+  when duplicate_object then null;
+end $$;
 
 -- Done. Verify with:
 -- select * from public.rental_last_location;

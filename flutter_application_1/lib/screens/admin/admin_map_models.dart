@@ -12,6 +12,7 @@ class _MarkerRow {
     required this.lng,
     required this.accuracyM,
     required this.recordedAt,
+    this.heading,
   });
 
   final String rentalId;
@@ -22,6 +23,26 @@ class _MarkerRow {
   final double lng;
   final double? accuracyM;
   final DateTime? recordedAt;
+  final double? heading;
+
+  /// One missed 3-second GPS write → treat as no signal (idle).
+  static const staleAfter = Duration(seconds: 4);
+
+  bool get isStale {
+    final at = recordedAt;
+    if (at == null) return true;
+    return DateTime.now().toUtc().difference(at.toUtc()) > staleAfter;
+  }
+
+  String get freshnessLabel {
+    final at = recordedAt;
+    if (at == null) return 'No signal yet';
+    final age = DateTime.now().toUtc().difference(at.toUtc());
+    if (age.inSeconds < 4) return 'Live now';
+    if (age.inSeconds < 60) return 'Last seen ${age.inSeconds}s ago';
+    if (age.inMinutes < 60) return 'Last seen ${age.inMinutes}m ago';
+    return 'Last seen ${age.inHours}h ago';
+  }
 
   static _MarkerRow? fromJoined(Map<String, dynamic> json) {
     try {
@@ -46,6 +67,9 @@ class _MarkerRow {
         recordedAt: json['recorded_at'] == null
             ? null
             : DateTime.tryParse(json['recorded_at'].toString()),
+        heading: json['heading'] == null
+            ? null
+            : (json['heading'] as num).toDouble(),
       );
     } catch (_) {
       return null;

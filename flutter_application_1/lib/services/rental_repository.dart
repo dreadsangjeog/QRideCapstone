@@ -40,6 +40,27 @@ class RentalRepository {
     );
   }
 
+  /// Extends an active rental by [extraMinutes] (minimum 15).
+  Future<void> extendRental({
+    required String rentalId,
+    required int extraMinutes,
+  }) async {
+    if (extraMinutes < 15) {
+      throw ArgumentError.value(
+        extraMinutes,
+        'extraMinutes',
+        'must be at least 15',
+      );
+    }
+    await SupabaseClientProvider.client.rpc(
+      'extend_rental',
+      params: {
+        'p_rental_id': rentalId,
+        'p_extra_mins': extraMinutes,
+      },
+    );
+  }
+
   /// Fetches the current user's most recent pending or active rental.
   /// Returns null if the user has no open rental.
   Future<Rental?> fetchMyActiveRental() async {

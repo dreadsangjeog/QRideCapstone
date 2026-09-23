@@ -54,6 +54,11 @@ class AdminRepository {
     required String bikeId,
     required String status,
   }) async {
+    if (status == 'rented') {
+      throw Exception(
+        'Rented is set automatically when a rider’s rental is approved.',
+      );
+    }
     await SupabaseClientProvider.client
         .from('bikes')
         .update({'status': status}).eq('id', bikeId);
@@ -65,6 +70,11 @@ class AdminRepository {
     required String label,
     String status = 'available',
   }) async {
+    if (status == 'rented') {
+      throw Exception(
+        'Rented is set automatically when a rider’s rental is approved.',
+      );
+    }
     final row = await SupabaseClientProvider.client
         .from('bikes')
         .insert({
@@ -129,6 +139,15 @@ class AdminRepository {
         .toList();
   }
 
+  /// How many rentals are currently pending acceptance.
+  Future<int> countPendingRentals() async {
+    final rows = await SupabaseClientProvider.client
+        .from('rentals')
+        .select('id')
+        .eq('status', 'pending');
+    return (rows as List<dynamic>).length;
+  }
+
   /// Approves a pending rental — the user's countdown starts from this moment.
   Future<void> approveRental(String rentalId) async {
     await SupabaseClientProvider.client.rpc(
@@ -138,6 +157,7 @@ class AdminRepository {
   }
 
   /// Rejects a pending rental — the bike is freed immediately.
+  /// Kept for SQL RPC compatibility; admin UI is accept-only.
   Future<void> rejectRental(String rentalId) async {
     await SupabaseClientProvider.client.rpc(
       'reject_rental',

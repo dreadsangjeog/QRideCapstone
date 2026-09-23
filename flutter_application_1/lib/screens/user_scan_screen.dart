@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import 'package:geolocator/geolocator.dart';
-
 import '../models/bike.dart';
 import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
+import '../services/kyc_repository.dart';
 import '../services/rental_repository.dart';
+import '../utils/location_access.dart';
+import '../utils/network_errors.dart';
+import '../widgets/qride_brand.dart';
 import '../widgets/user_portal_chrome.dart';
 
 part 'user_scan_helpers.dart';
@@ -27,8 +29,18 @@ class _UserScanScreenState extends State<UserScanScreen> {
 
   MobileScannerController? _scannerController;
   bool _scannerVisible = false;
+  bool _openingCamera = true;
   bool _busy = false;
   bool _processingFrame = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _requestCameraAndOpenScanner();
+    });
+  }
 
   @override
   void dispose() {
@@ -44,9 +56,19 @@ class _UserScanScreenState extends State<UserScanScreen> {
     );
   }
 
+  void _leaveScan() {
+    if (!mounted) return;
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    } else {
+      _closeScanner();
+    }
+  }
+
   Future<void> _requestCameraAndOpenScanner() async {
     if (kIsWeb) {
       if (!mounted) return;
+      setState(() => _openingCamera = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -65,6 +87,7 @@ class _UserScanScreenState extends State<UserScanScreen> {
     if (!mounted) return;
 
     if (!status.isGranted) {
+      if (mounted) setState(() => _openingCamera = false);
       if (status.isPermanentlyDenied) {
         await showDialog<void>(
           context: context,
@@ -110,6 +133,7 @@ class _UserScanScreenState extends State<UserScanScreen> {
     setState(() {
       _ensureController();
       _scannerVisible = true;
+      _openingCamera = false;
       _processingFrame = false;
     });
   }
@@ -118,6 +142,7 @@ class _UserScanScreenState extends State<UserScanScreen> {
     _scannerController?.stop();
     setState(() {
       _scannerVisible = false;
+      _openingCamera = false;
       _processingFrame = false;
     });
   }
@@ -148,6 +173,14 @@ class _UserScanScreenState extends State<UserScanScreen> {
 
     setState(() => _busy = true);
     try {
+      if (!await hasNetworkConnection()) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(kOfflineMessage)),
+        );
+        await _restartScannerIfNeeded();
+        return;
+      }
       final bike = await _adminRepo.fetchBikeByCode(code);
       if (!mounted) return;
       if (bike == null) {
@@ -161,7 +194,7 @@ class _UserScanScreenState extends State<UserScanScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
+        SnackBar(content: Text(friendlyNetworkError(e))),
       );
       await _restartScannerIfNeeded();
     } finally {
@@ -180,38 +213,26 @@ class _UserScanScreenState extends State<UserScanScreen> {
       return;
     }
 
-    // 1. GPS must be enabled before the rider can request a rental.
-    final gpsEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!gpsEnabled) {
+    final kyc = await KycRepository().fetchMine();
+    if (!kyc.isVerified) {
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) {
-          final t = Theme.of(ctx);
-          return AlertDialog(
-            icon: Icon(Icons.location_off_outlined,
-                size: 32, color: t.colorScheme.error),
-            title: const Text('GPS is off'),
-            content: const Text(
-              'QRide needs your GPS to track the ride and show your location to the admin. '
-              'Please enable Location Services in your device settings, then try again.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  Geolocator.openLocationSettings();
-                },
-                child: const Text('Open settings'),
-              ),
-            ],
-          );
-        },
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            kyc.isPending
+                ? 'Your ID is still under review. You can rent after an admin verifies you.'
+                : 'Verify your ID and live selfie before renting a bike.',
+          ),
+        ),
       );
+      await _restartScannerIfNeeded();
+      return;
+    }
+
+    // 1. Location service + app permission required (scan and manual code).
+    if (!mounted) return;
+    final locationOk = await ensureLocationAccessForRental(context);
+    if (!locationOk) {
       await _restartScannerIfNeeded();
       return;
     }
@@ -223,15 +244,38 @@ class _UserScanScreenState extends State<UserScanScreen> {
       return;
     }
 
+    // Re-check in case the rider revoked permission while picking duration.
+    if (!await hasLocationAccessForRental()) {
+      if (!mounted) return;
+      final stillOk = await ensureLocationAccessForRental(context);
+      if (!stillOk) {
+        await _restartScannerIfNeeded();
+        return;
+      }
+    }
+
     // 3. Submit request.
     try {
+      if (!await hasNetworkConnection()) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(kOfflineMessage)),
+        );
+        await _restartScannerIfNeeded();
+        return;
+      }
       await _rentalRepo.requestRental(
         bikeId: bike.id,
         plannedMinutes: planned,
       );
       if (!mounted) return;
-      _closeScanner();
-      ScaffoldMessenger.of(context).showSnackBar(
+      final messenger = ScaffoldMessenger.of(context);
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      } else {
+        _closeScanner();
+      }
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Request submitted! Waiting for admin approval.'),
           duration: Duration(seconds: 4),
@@ -240,11 +284,13 @@ class _UserScanScreenState extends State<UserScanScreen> {
     } catch (e) {
       if (!mounted) return;
       final msg = e.toString();
-      final friendly = msg.contains('already_has_active_rental')
-          ? 'You already have an active or pending rental.'
-          : msg.contains('bike_not_available')
-              ? 'This bike is no longer available.'
-              : msg;
+      final friendly = msg.contains('kyc_not_verified')
+          ? 'Verify your ID and live selfie before renting a bike.'
+          : msg.contains('already_has_active_rental')
+              ? 'You already have an active or pending rental.'
+              : msg.contains('bike_not_available')
+                  ? 'This bike is no longer available.'
+                  : friendlyNetworkError(e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(friendly)),
       );
@@ -378,6 +424,16 @@ class _UserScanScreenState extends State<UserScanScreen> {
                                 height: 1.4,
                               ),
                             ),
+                            const SizedBox(height: 16),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                side: const BorderSide(color: Colors.white38),
+                              ),
+                              onPressed: _busy ? null : _manualCodeEntry,
+                              icon: const Icon(Icons.keyboard_rounded),
+                              label: const Text('Enter code manually'),
+                            ),
                           ],
                         ),
                       ),
@@ -400,7 +456,7 @@ class _UserScanScreenState extends State<UserScanScreen> {
                   children: [
                     _GlassIconButton(
                       icon: Icons.close_rounded,
-                      onPressed: _busy ? null : _closeScanner,
+                      onPressed: _busy ? null : _leaveScan,
                       tooltip: 'Close',
                     ),
                     const Spacer(),
@@ -483,42 +539,57 @@ class _UserScanScreenState extends State<UserScanScreen> {
                   final torchAvailable = torch != TorchState.unavailable;
                   final isOn = torch == TorchState.on;
 
-                  return DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: const Color(0x66000000),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white12),
-                      boxShadow: const [
-                        BoxShadow(
-                          blurRadius: 32,
-                          offset: Offset(0, 12),
-                          color: Color(0x59000000),
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (torchAvailable)
+                        _TorchFab(
+                          isOn: isOn,
+                          busy: _busy,
+                          onPressed: () => controller.toggleTorch(),
                         ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (torchAvailable)
-                            _TorchFab(
-                              isOn: isOn,
-                              busy: _busy,
-                              onPressed: () => controller.toggleTorch(),
-                            ),
-                          if (torchAvailable) const SizedBox(height: 14),
-                          Text(
-                            "Tap the preview to focus. We'll start your rental when the code matches an available bike.",
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white.withValues(alpha: 0.82),
-                              height: 1.45,
-                            ),
+                      if (torchAvailable) const SizedBox(height: 14),
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0x99000000),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'QR not working? Type the bike code.',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white.withValues(alpha: 0.86),
+                                  height: 1.35,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: const Color(0xFF111827),
+                                    minimumSize: const Size.fromHeight(46),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                  ),
+                                  onPressed: _busy ? null : _manualCodeEntry,
+                                  icon: const Icon(Icons.keyboard_rounded),
+                                  label: const Text('Enter code'),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   );
                 },
               ),
@@ -540,154 +611,67 @@ class _UserScanScreenState extends State<UserScanScreen> {
       );
     }
 
+    if (_openingCamera) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+    }
+
     final cs = theme.colorScheme;
 
-    return Scaffold(
-      backgroundColor: cs.surface,
-      appBar: AppBar(
-        title: const Text('Scan bike'),
-        backgroundColor: Color.lerp(cs.surface, cs.primaryContainer, 0.08),
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-      ),
-      body: Stack(
-        fit: StackFit.expand,
+    return UserPortalScaffold(
+      title: 'Scan bike',
+      showBell: false,
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
         children: [
-          Positioned.fill(child: UserPortalBackdrop(colorScheme: cs)),
-          ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-            children: [
-              const SizedBox(height: 8),
-              Center(
-                child: Container(
-                  width: 76,
-                  height: 76,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: cs.surface.withValues(alpha: 0.72),
-                    border: Border.all(
-                      color: cs.primary.withValues(alpha: 0.12),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        blurRadius: 28,
-                        spreadRadius: 0,
-                        offset: const Offset(0, 10),
-                        color: cs.primary.withValues(alpha: 0.08),
-                      ),
-                    ],
-                  ),
-                  child: Container(
-                    margin: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: cs.primaryContainer.withValues(alpha: 0.75),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.qr_code_2_rounded,
-                      size: 34,
-                      color: cs.onPrimaryContainer,
+          PolishedSectionCard(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+              child: Column(
+                children: [
+                  const QrideBikeMark(size: 84),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Camera needs access',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.4,
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 22),
-              Text(
-                'Start a rental',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.5,
-                  color: cs.onSurface,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Scan the QR on the bike with your camera, or type the code if you prefer.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  height: 1.45,
-                ),
-              ),
-              const SizedBox(height: 28),
-              Material(
-                color: cs.surface.withValues(alpha: 0.82),
-                elevation: 0,
-                shadowColor: Colors.transparent,
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: cs.outlineVariant.withValues(alpha: 0.35),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Allow the camera to scan a bike QR, or type the code printed on the bike.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      height: 1.45,
                     ),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                    child: Row(
-                      children: [
-                        Icon(Icons.tips_and_updates_outlined, color: cs.primary),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Allow camera access when prompted so we can read the code.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: cs.onSurfaceVariant,
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                ],
               ),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                onPressed: (kIsWeb || _busy) ? null : _requestCameraAndOpenScanner,
-                icon: const Icon(Icons.photo_camera_rounded),
-                label: Text(
-                  kIsWeb ? 'Camera (mobile only)' : 'Open camera',
-                ),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
-                  backgroundColor: cs.surface.withValues(alpha: 0.65),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                onPressed: _busy ? null : _manualCodeEntry,
-                icon: const Icon(Icons.keyboard_rounded),
-                label: const Text('Enter code manually'),
-              ),
-              if (_busy) ...[
-                const SizedBox(height: 28),
-                Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: cs.primary,
-                    ),
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: (kIsWeb || _busy) ? null : _requestCameraAndOpenScanner,
+            icon: const Icon(Icons.photo_camera_rounded),
+            label: Text(kIsWeb ? 'Camera (mobile only)' : 'Try camera again'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _manualCodeEntry,
+            icon: const Icon(Icons.keyboard_rounded),
+            label: const Text('Enter code manually'),
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 24),
+            const Center(child: CircularProgressIndicator()),
+          ],
         ],
       ),
     );

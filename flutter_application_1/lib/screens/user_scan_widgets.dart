@@ -182,12 +182,22 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
               return ChoiceChip(
                 label: Text(p.label),
                 selected: selected,
+                showCheckmark: false,
                 onSelected: (_) =>
                     setState(() => _selectedMinutes = p.minutes),
                 selectedColor: cs.primary,
+                backgroundColor: cs.surface,
+                side: BorderSide(
+                  color: selected
+                      ? cs.primary
+                      : cs.outlineVariant.withValues(alpha: 0.6),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 labelStyle: TextStyle(
                   color: selected ? cs.onPrimary : cs.onSurface,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                 ),
               );
             }).toList(),

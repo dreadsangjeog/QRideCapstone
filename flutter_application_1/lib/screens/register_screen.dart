@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
+import '../screens/legal/terms_screen.dart';
 import '../utils/auth_validators.dart';
 import '../utils/error_message.dart';
 
@@ -30,6 +31,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _codeSent = false;
   bool _showPassword = false;
   bool _showConfirmPassword = false;
+  bool _agreedTerms = false;
   Timer? _sendCooldownTimer;
   DateTime? _nextSendAllowedAt;
 
@@ -69,6 +71,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _debugDetails = null;
     });
     if (!_formKey.currentState!.validate()) return;
+    if (!_agreedTerms) {
+      setState(() {
+        _error = 'Please agree to the Terms & Privacy to continue.';
+      });
+      return;
+    }
 
     final email = _email.text.trim().toLowerCase();
     final username = _username.text.trim().toLowerCase();
@@ -136,6 +144,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _debugDetails = null;
     });
     if (!_formKey.currentState!.validate()) return;
+    if (!_agreedTerms) {
+      setState(() {
+        _error = 'Please agree to the Terms & Privacy to continue.';
+      });
+      return;
+    }
 
     setState(() => _busy = true);
     try {
@@ -150,7 +164,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Account created. Sign in with your username and password.',
+            'Account created. Sign in, then upload your ID and complete a live selfie before you can rent.',
           ),
         ),
       );
@@ -381,9 +395,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                           ],
                         ],
+                        const SizedBox(height: 8),
+                        TermsAgreeRow(
+                          agreed: _agreedTerms,
+                          onChanged: (v) => setState(() {
+                            _agreedTerms = v;
+                            if (v) _error = null;
+                          }),
+                        ),
                         const SizedBox(height: 14),
                         FilledButton(
-                          onPressed: (_busy || !_codeSent) ? null : _finish,
+                          onPressed: (_busy || !_codeSent || !_agreedTerms)
+                              ? null
+                              : _finish,
                           child: _busy
                               ? SizedBox(
                                   width: 22,

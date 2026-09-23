@@ -8,12 +8,10 @@ class _RequestCard extends StatelessWidget {
   const _RequestCard({
     required this.row,
     required this.onApprove,
-    required this.onReject,
   });
 
   final RentalWithBike row;
   final VoidCallback onApprove;
-  final VoidCallback onReject;
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +24,17 @@ class _RequestCard extends StatelessWidget {
         ? '${r.plannedMinutes ~/ 60}h'
         : '${r.plannedMinutes ~/ 60}h ${r.plannedMinutes % 60}m';
 
-    return Card(
-      child: Padding(
+    return Material(
+      color: cs.surface.withValues(alpha: 0.92),
+      elevation: 0,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: cs.outlineVariant.withValues(alpha: 0.4),
+          ),
+        ),
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -116,28 +123,13 @@ class _RequestCard extends StatelessWidget {
 
             const SizedBox(height: 14),
 
-            // Actions
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: cs.error,
-                      side: BorderSide(color: cs.error.withValues(alpha: 0.5)),
-                    ),
-                    onPressed: onReject,
-                    child: const Text('Reject'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onApprove,
-                    icon: const Icon(Icons.check_rounded, size: 18),
-                    label: const Text('Approve'),
-                  ),
-                ),
-              ],
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+              ),
+              onPressed: onApprove,
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: const Text('Accept'),
             ),
           ],
         ),

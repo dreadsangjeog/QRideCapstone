@@ -1,9 +1,13 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+
+import '../theme/brand.dart';
+import '../widgets/qride_brand.dart';
+
 part 'splash_painters.dart';
 
-/// Cold-start splash: centered hero, readable contrast, transparent logo asset.
+/// Cold-start splash — light blue chrome + launcher bike mark.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, required this.onFinished});
 
@@ -88,59 +92,35 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // Modern, theme-aware palette (high contrast on the splash itself).
-    final bgColors = isDark
-        ? const [Color(0xFF0C0A10), Color(0xFF151018), Color(0xFF1B1522)]
-        : const [Color(0xFFF3F0FA), Color(0xFFFBFAFE), Color(0xFFFFFFFF)];
-    final glow = isDark
-        ? const Color(0xFF8B7AD6).withValues(alpha: 0.22)
-        : const Color(0xFF6B4E8C).withValues(alpha: 0.12);
-    final glowCore = isDark
-        ? const Color(0xFFA99AE8).withValues(alpha: 0.14)
-        : const Color(0xFF7C5CB5).withValues(alpha: 0.08);
-
     final wordStyle = TextStyle(
       fontSize: 40,
       fontWeight: FontWeight.w800,
       letterSpacing: -1.2,
       height: 1.05,
-      color: isDark ? const Color(0xFFF5F2FC) : const Color(0xFF2D1F35),
+      color: isDark ? Colors.white : QrideBrand.accentDeep,
     );
-
     final tagStyle = TextStyle(
       fontSize: 15,
       fontWeight: FontWeight.w600,
       letterSpacing: 0.4,
       color: isDark
-          ? const Color(0xFFB5ADC8).withValues(alpha: 0.95)
-          : const Color(0xFF5C5368).withValues(alpha: 0.9),
+          ? QrideBrand.accentSoft.withValues(alpha: 0.9)
+          : QrideBrand.accentDeep.withValues(alpha: 0.70),
     );
-
     final ringDot = isDark
-        ? const Color(0xFFC4B8E0).withValues(alpha: 0.55)
-        : const Color(0xFF6B5B8C).withValues(alpha: 0.45);
+        ? QrideBrand.accentSoft.withValues(alpha: 0.55)
+        : QrideBrand.accent.withValues(alpha: 0.40);
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: bgColors,
-            stops: const [0.0, 0.55, 1.0],
-          ),
-        ),
+      body: QrideBrandBackdrop(
         child: SafeArea(
           child: AnimatedBuilder(
             animation: Listenable.merge([_intro, _pulse]),
             builder: (context, _) {
               final pulseT = _pulse.value;
-
               return Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Soft aura (no harsh boxes)
                   Center(
                     child: FadeTransition(
                       opacity: _logoOpacity,
@@ -151,8 +131,10 @@ class _SplashScreenState extends State<SplashScreen>
                           shape: BoxShape.circle,
                           gradient: RadialGradient(
                             colors: [
-                              glowCore,
-                              glow,
+                              QrideBrand.accent
+                                  .withValues(alpha: isDark ? 0.22 : 0.12),
+                              QrideBrand.accentSoft
+                                  .withValues(alpha: isDark ? 0.10 : 0.06),
                               Colors.transparent,
                             ],
                             stops: [0.0, 0.35 + 0.1 * pulseT, 1.0],
@@ -161,7 +143,6 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-
                   Center(
                     child: SizedBox(
                       width: 340,
@@ -177,7 +158,6 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-
                   Column(
                     children: [
                       Expanded(
@@ -192,26 +172,11 @@ class _SplashScreenState extends State<SplashScreen>
                                   scale: _logoScale,
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
-                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        children: [
-                                          Image.asset(
-                                            'assets/images/qride_logo_mark.png',
-                                            height: 76,
-                                            filterQuality: FilterQuality.high,
-                                            gaplessPlayback: true,
-                                          ),
-                                          const SizedBox(width: 16),
-                                          Text('QRide', style: wordStyle),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 28),
+                                      const QrideBikeMark(size: 108),
+                                      const SizedBox(height: 22),
+                                      Text('QRide', style: wordStyle),
+                                      const SizedBox(height: 16),
                                       SlideTransition(
                                         position: _tagSlide,
                                         child: FadeTransition(
@@ -243,14 +208,12 @@ class _SplashScreenState extends State<SplashScreen>
                                   borderRadius: BorderRadius.circular(999),
                                   child: LinearProgressIndicator(
                                     minHeight: 4,
-                                    backgroundColor: isDark
-                                        ? Colors.white.withValues(alpha: 0.08)
-                                        : const Color(0xFF2D1F35)
-                                            .withValues(alpha: 0.08),
-                                    valueColor: AlwaysStoppedAnimation(
-                                      isDark
-                                          ? const Color(0xFFD0C4F0)
-                                          : const Color(0xFF6B4E8C),
+                                    backgroundColor: (isDark
+                                            ? Colors.white
+                                            : QrideBrand.accentDeep)
+                                        .withValues(alpha: 0.10),
+                                    valueColor: const AlwaysStoppedAnimation(
+                                      QrideBrand.accent,
                                     ),
                                   ),
                                 ),
@@ -262,10 +225,10 @@ class _SplashScreenState extends State<SplashScreen>
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
                                   letterSpacing: 2.8,
-                                  color: isDark
-                                      ? Colors.white.withValues(alpha: 0.38)
-                                      : const Color(0xFF2D1F35)
-                                          .withValues(alpha: 0.35),
+                                  color: (isDark
+                                          ? Colors.white
+                                          : QrideBrand.accentDeep)
+                                      .withValues(alpha: 0.38),
                                 ),
                               ),
                             ],

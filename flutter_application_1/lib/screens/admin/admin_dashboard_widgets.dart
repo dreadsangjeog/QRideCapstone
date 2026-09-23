@@ -574,7 +574,6 @@ class _StatusMenu extends StatelessWidget {
       icon: Icon(Icons.more_vert_rounded, size: 20, color: cs.onSurfaceVariant),
       itemBuilder: (context) => [
         _menuItem('available',   'Available',   Icons.check_circle_rounded, const Color(0xFF22C55E)),
-        _menuItem('rented',      'Rented',      Icons.directions_bike_rounded, cs.primary),
         _menuItem('maintenance', 'Maintenance', Icons.build_rounded, cs.error),
       ],
     );
