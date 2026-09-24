@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../services/kyc_repository.dart';
 import '../../theme/brand.dart';
+import '../../widgets/qride_glass.dart';
 import '../../widgets/user_portal_chrome.dart';
+import 'admin_layout.dart';
 
 /// Admin tab: search riders and review uploaded ID / selfies.
 class AdminVerifyUsersTab extends StatefulWidget {
@@ -49,8 +51,10 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
   }
 
   Future<void> _openUser(KycPendingUser u) async {
-    final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => _AdminKycReviewScreen(user: u)),
+    final changed = await showAdminPage<bool>(
+      context,
+      maxWidth: 900,
+      builder: (_) => _AdminKycReviewScreen(user: u),
     );
     if (changed == true && mounted) await _refresh();
   }
@@ -67,35 +71,23 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    return ColoredBox(
-      color: QrideBrand.mist,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 880),
+    final pad = adminPagePadding(context);
+    return AdminContent(
+          maxWidth: 1180,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                padding: EdgeInsets.fromLTRB(pad.left, pad.top, pad.right, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Riders',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
-                      ),
+                    const AdminPageHeader(
+                      title: 'Riders',
+                      subtitle:
+                          'Verify IDs and open credentials when a bike is not returned',
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Search accounts and open ID credentials when a bike is not returned.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: cs.onSurfaceVariant,
-                        height: 1.35,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     TextField(
                       controller: _searchCtrl,
                       onChanged: (v) {
@@ -259,17 +251,26 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                           ],
                         );
                       }
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                        itemCount: rows.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (context, i) {
-                          final u = rows[i];
-                          return _UserRowCard(
-                            user: u,
-                            onTap: () => _openUser(u),
-                          );
-                        },
+                      return ListView(
+                        padding: EdgeInsets.fromLTRB(
+                          pad.left,
+                          8,
+                          pad.right,
+                          pad.bottom,
+                        ),
+                        children: [
+                          AdminCardGrid(
+                            minItemWidth: 420,
+                            spacing: 12,
+                            children: [
+                              for (final u in rows)
+                                _UserRowCard(
+                                  user: u,
+                                  onTap: () => _openUser(u),
+                                ),
+                            ],
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -277,8 +278,6 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 }
@@ -331,23 +330,11 @@ class _UserRowCard extends StatelessWidget {
     final hasDocs = (user.idImagePath?.isNotEmpty ?? false) ||
         (user.selfieImagePath?.isNotEmpty ?? false);
 
-    return Material(
-      color: cs.surface.withValues(alpha: 0.92),
-      elevation: 0,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: cs.outlineVariant.withValues(alpha: 0.4),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
-            child: Row(
+    return GlassPanel(
+      radius: 18,
+      onTap: onTap,
+      padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
+      child: Row(
               children: [
                 Container(
                   width: 48,
@@ -395,9 +382,6 @@ class _UserRowCard extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -531,6 +515,8 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
       backgroundColor: QrideBrand.mist,
       appBar: AppBar(
         title: const Text('Rider profile'),
+        leading: adminDialogLeading(context),
+        automaticallyImplyLeading: !adminInDialog(context),
         backgroundColor: QrideBrand.mist,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -565,10 +551,23 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              u.username,
+                              u.legalName.isEmpty ? u.username : u.legalName,
                               style: theme.textTheme.headlineSmall?.copyWith(
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -0.4,
+                              ),
+                            ),
+                            if (u.legalName.isNotEmpty)
+                              Text(
+                                'Username: ${u.username}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: cs.onSurfaceVariant,
+                                ),
+                              ),
+                            Text(
+                              'Match this name to the ID photo',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -896,22 +895,50 @@ class _KycPhoto extends StatelessWidget {
   }
 
   void _openFull(BuildContext context, String url, String title) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(
-            title: Text(title),
-            backgroundColor: Colors.black,
-            foregroundColor: Colors.white,
-          ),
-          body: InteractiveViewer(
-            minScale: 1,
-            maxScale: 5,
-            child: Center(
-              child: Image.network(url, fit: BoxFit.contain),
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.88),
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: Colors.transparent,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 1,
+                maxScale: 5,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 72, 24, 24),
+                    child: Image.network(url, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
             ),
-          ),
+            Positioned(
+              top: 16,
+              left: 20,
+              right: 12,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

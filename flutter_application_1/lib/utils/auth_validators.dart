@@ -19,6 +19,23 @@ class AuthValidators {
     return null;
   }
 
+  static final _personName = RegExp(r"^[A-Za-z][A-Za-z .'\-]*$");
+
+  /// Legal name used to match the ID. Middle name may be empty.
+  static String? legalName(
+    String? v, {
+    required String label,
+    bool required = true,
+  }) {
+    final s = (v ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (s.isEmpty) return required ? '$label is required' : null;
+    if (s.length > 40) return '$label must be at most 40 characters';
+    if (!_personName.hasMatch(s)) {
+      return 'Letters, spaces, hyphens, and apostrophes only';
+    }
+    return null;
+  }
+
   static String? username(String? v) {
     final s = (v ?? '').trim();
     if (s.isEmpty) return 'Username is required';

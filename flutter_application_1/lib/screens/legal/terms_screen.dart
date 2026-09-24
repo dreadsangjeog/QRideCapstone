@@ -86,17 +86,53 @@ class TermsScreen extends StatelessWidget {
               ],
             ),
           ),
-          if (requireAccept)
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                child: FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('I agree'),
+          if (requireAccept) const _TermsAcceptBar(),
+        ],
+      ),
+    );
+  }
+}
+
+class _TermsAcceptBar extends StatefulWidget {
+  const _TermsAcceptBar();
+
+  @override
+  State<_TermsAcceptBar> createState() => _TermsAcceptBarState();
+}
+
+class _TermsAcceptBarState extends State<_TermsAcceptBar> {
+  bool _agreed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Material(
+      color: cs.surface,
+      elevation: 8,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: _agreed,
+                onChanged: (v) => setState(() => _agreed = v ?? false),
+                title: const Text(
+                  'I agree to the Terms & Privacy',
+                  style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
-            ),
-        ],
+              FilledButton(
+                onPressed: _agreed ? () => Navigator.of(context).pop(true) : null,
+                child: const Text('Agree and continue'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

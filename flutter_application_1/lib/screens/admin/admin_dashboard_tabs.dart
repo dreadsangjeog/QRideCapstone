@@ -20,12 +20,12 @@ class _BikesTabState extends State<_BikesTab> {
   }
 
   Future<void> _openQrGenerator({Bike? bike}) async {
-    final refresh = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => AdminGenerateQrScreen(
-          repo: widget.repo,
-          initialBike: bike,
-        ),
+    final refresh = await showAdminPage<bool>(
+      context,
+      maxWidth: 620,
+      builder: (_) => AdminGenerateQrScreen(
+        repo: widget.repo,
+        initialBike: bike,
       ),
     );
     if (refresh == true && mounted) await _refresh();
@@ -34,98 +34,120 @@ class _BikesTabState extends State<_BikesTab> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final wide = adminWide(context);
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: RefreshIndicator(
-      onRefresh: _refresh,
-      child: FutureBuilder<List<Bike>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return _ErrorState(
-              title: 'Could not load bikes',
-              error: snapshot.error,
-              onRetry: _refresh,
-            );
-          }
-          final bikes = snapshot.data ?? const <Bike>[];
-          final filtered = bikes
-              .where(
-                (b) => _statusFilter == null || b.status == _statusFilter,
-              )
-              .toList();
-          if (bikes.isEmpty) {
-            return _EmptyState(
-              icon: Icons.directions_bike_outlined,
-              title: 'No bikes found',
-              subtitle: 'Add bikes in Supabase to manage availability here.',
-              action: OutlinedButton.icon(
-                onPressed: _refresh,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh'),
-              ),
-            );
-          }
-          if (filtered.isEmpty) {
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              children: [
-                _StatusFilterBar(
-                  selected: _statusFilter,
-                  onSelected: (s) => setState(() => _statusFilter = s),
+        onRefresh: _refresh,
+        child: FutureBuilder<List<Bike>>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return _ErrorState(
+                title: 'Could not load bikes',
+                error: snapshot.error,
+                onRetry: _refresh,
+              );
+            }
+            final bikes = snapshot.data ?? const <Bike>[];
+            final filtered = bikes
+                .where(
+                  (b) => _statusFilter == null || b.status == _statusFilter,
+                )
+                .toList();
+            if (bikes.isEmpty) {
+              return _EmptyState(
+                icon: Icons.directions_bike_outlined,
+                title: 'No bikes yet',
+                subtitle: 'Create a bike and print its QR code to get started.',
+                action: FilledButton.icon(
+                  onPressed: () => _openQrGenerator(),
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('New bike & QR'),
                 ),
-                const SizedBox(height: 32),
-                Center(
-                  child: Text(
-                    'No bikes match this filter.',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+              );
+            }
+
+            return ListView(
+              padding: adminPagePadding(context),
+              children: [
+                AdminContent(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AdminPageHeader(
+                        title: 'Bikes',
+                        subtitle:
+                            '${bikes.length} in the fleet · tap the menu to set maintenance',
+                        trailing: wide
+                            ? FilledButton.icon(
+                                onPressed: () => _openQrGenerator(),
+                                icon: const Icon(Icons.add_rounded, size: 18),
+                                label: const Text('New bike & QR'),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(height: 16),
+                      _StatusFilterBar(
+                        selected: _statusFilter,
+                        onSelected: (s) => setState(() => _statusFilter = s),
+                      ),
+                      const SizedBox(height: 16),
+                      if (filtered.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 40),
+                          child: Center(
+                            child: Text(
+                              'No bikes match this filter.',
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        AdminCardGrid(
+                          minItemWidth: 340,
+                          spacing: 12,
+                          children: [
+                            for (final bike in filtered)
+                              _BikeCard(
+                                bike: bike,
+                                onQr: () => _openQrGenerator(bike: bike),
+                                onStatusChange: (status) async {
+                                  await widget.repo.updateBikeStatus(
+                                    bikeId: bike.id,
+                                    status: status,
+                                  );
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Status updated to $status'),
+                                    ),
+                                  );
+                                  await _refresh();
+                                },
+                              ),
+                          ],
+                        ),
+                    ],
                   ),
                 ),
               ],
             );
-          }
-
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            itemCount: filtered.length + 1,
-            separatorBuilder: (_, index) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return _StatusFilterBar(
-                  selected: _statusFilter,
-                  onSelected: (s) => setState(() => _statusFilter = s),
-                );
-              }
-              final bike = filtered[index - 1];
-              return _BikeCard(
-                bike: bike,
-                onQr: () => _openQrGenerator(bike: bike),
-                onStatusChange: (status) async {
-                  await widget.repo.updateBikeStatus(
-                    bikeId: bike.id,
-                    status: status,
-                  );
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Status updated to $status')),
-                  );
-                  await _refresh();
-                },
-              );
-            },
-          );
-        },
+          },
+        ),
       ),
-    ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openQrGenerator(),
-        icon: const Icon(Icons.pedal_bike_outlined),
-        label: const Text('New bike & QR'),
-      ),
+      floatingActionButton: wide
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => _openQrGenerator(),
+              icon: const Icon(Icons.pedal_bike_outlined),
+              label: const Text('New bike & QR'),
+            ),
     );
   }
 }
@@ -252,12 +274,30 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
             );
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: rentals.length,
-            separatorBuilder: (context, _) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final row = rentals[index];
+          return ListView(
+            padding: adminPagePadding(context),
+            children: [
+              AdminContent(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AdminPageHeader(
+                      title: 'Active rentals',
+                      subtitle:
+                          '${rentals.length} ride${rentals.length == 1 ? '' : 's'} in progress',
+                      trailing: IconButton(
+                        tooltip: 'Refresh',
+                        onPressed: _refresh,
+                        icon: const Icon(Icons.refresh_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AdminCardGrid(
+                      minItemWidth: 380,
+                      spacing: 12,
+                      children: [
+                        for (final row in rentals)
+                          Builder(builder: (context) {
               final r = row.rental;
               // For stale rentals without an approved_at, the timer is meaningless.
               // We still show the row so admin can end it, but don't compute overtime.
@@ -269,10 +309,10 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
               final remaining = endTime.difference(now);
               final df = DateFormat('h:mm a');
 
-              return Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
+              return GlassPanel(
+                radius: 20,
+                padding: const EdgeInsets.all(14),
+                child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // Rider + bike
@@ -416,9 +456,14 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
                       ),
                     ],
                   ),
-                ),
               );
-            },
+                          }),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           );
         },
       ),

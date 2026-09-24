@@ -6,6 +6,8 @@ import '../../models/rental.dart';
 import '../../models/rental_with_bike.dart';
 import '../../services/admin_repository.dart';
 import '../../utils/rental_billing.dart';
+import '../../widgets/qride_glass.dart';
+import 'admin_layout.dart';
 
 typedef _BillingOutcome = ({double penalty, double total});
 
@@ -69,29 +71,23 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
     final cs = theme.colorScheme;
     final df = DateFormat('MMM d, yyyy · h:mm a');
 
-    return Column(
+    final pad = adminPagePadding(context);
+    return AdminContent(
+      maxWidth: 1080,
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          padding: EdgeInsets.fromLTRB(pad.left, pad.top, pad.right, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Rental history',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+              const AdminPageHeader(
+                title: 'Rental history',
+                subtitle:
+                    'Newest first · expand a row for timestamps and billing · use the pencil to correct charges',
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Everyone who used a bike, newest requests first (up to 500 rows per load). '
-                'Expand a row for full timestamps and billing. Use the pencil on ended rentals to correct charges.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -173,7 +169,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
                 }
                 return ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  padding: EdgeInsets.fromLTRB(pad.left, 0, pad.right, pad.bottom),
                   itemCount: rows.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, i) => _HistoryRentalCard(
@@ -196,6 +192,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
           ),
         ),
       ],
+      ),
     );
   }
 }
@@ -304,9 +301,9 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
     final storedTotal = r.actualCost;
     final showDbBilling = r.status == 'ended';
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.zero,
+    return GlassPanel(
+      radius: 20,
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

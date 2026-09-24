@@ -70,8 +70,9 @@ class _BikeCard extends StatelessWidget {
         ? bike.label!
         : 'Bike ${bike.code}';
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return GlassPanel(
+      radius: 20,
+      padding: EdgeInsets.zero,
       child: IntrinsicHeight(
         child: Row(
           children: [

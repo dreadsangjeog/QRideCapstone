@@ -143,6 +143,9 @@ class AuthService {
     required String email,
     required String password,
     required String username,
+    required String firstName,
+    String? middleName,
+    required String lastName,
   }) async {
     final e = email.trim().toLowerCase();
     final u = username.trim().toLowerCase();
@@ -155,6 +158,9 @@ class AuthService {
               'email': e,
               'username': u,
               'password': password,
+              'first_name': firstName.trim(),
+              'middle_name': (middleName ?? '').trim(),
+              'last_name': lastName.trim(),
             },
           )
           .timeout(const Duration(seconds: 30));
@@ -195,11 +201,17 @@ class AuthService {
     required String email,
     required String password,
     required String username,
+    required String firstName,
+    String? middleName,
+    required String lastName,
   }) async {
     await sendRegistrationOtp(
       email: email,
       password: password,
       username: username,
+      firstName: firstName,
+      middleName: middleName,
+      lastName: lastName,
     );
   }
 
@@ -209,6 +221,9 @@ class AuthService {
     required String username,
     required String password,
     required String otp,
+    required String firstName,
+    String? middleName,
+    required String lastName,
   }) async {
     final e = email.trim().toLowerCase();
     final u = username.trim().toLowerCase();
@@ -221,6 +236,9 @@ class AuthService {
               'username': u,
               'password': password,
               'otp': otp.trim(),
+              'first_name': firstName.trim(),
+              'middle_name': (middleName ?? '').trim(),
+              'last_name': lastName.trim(),
             },
           )
           .timeout(const Duration(seconds: 30));

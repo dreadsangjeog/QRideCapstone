@@ -13,13 +13,12 @@ import 'screens/register_screen.dart';
 import 'screens/user_root_shell.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
-
-/// Global theme-mode notifier. Toggle dark/light from anywhere in the app.
-final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
+import 'theme/theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
+    await loadSavedThemeMode();
     SupabaseConfig.assertConfigured();
     await Supabase.initialize(
       url: SupabaseConfig.effectiveUrl,

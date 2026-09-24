@@ -1,11 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../models/bike.dart';
 import '../../models/rental_with_bike.dart';
 import '../../services/admin_repository.dart';
+import '../../services/analytics_repository.dart';
 import '../../theme/brand.dart';
+import '../../utils/rental_billing.dart';
+import '../../widgets/qride_glass.dart';
+import 'admin_layout.dart';
+import 'admin_report_charts.dart';
 
-/// Overview home for admins — KPIs, shortcuts, and live queues.
+final _peso = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
+final _pesoExact = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+
+const _green = Color(0xFF16A34A);
+const _orange = Color(0xFFEA580C);
+const _pink = Color(0xFFDB2777);
+
+/// Overview home for admins — KPIs, fleet health, today, and live queues.
 class AdminHomeTab extends StatefulWidget {
   const AdminHomeTab({
     super.key,
@@ -23,12 +36,11 @@ class AdminHomeTab extends StatefulWidget {
 }
 
 class AdminHomeTabState extends State<AdminHomeTab> {
+  final _analytics = AnalyticsRepository();
   bool _loading = true;
-  int _available = 0;
-  int _rented = 0;
-  int _maintenance = 0;
+  List<Bike> _bikes = const [];
   int _active = 0;
-  int _fleet = 0;
+  ReportSnapshot? _week;
   List<RentalWithBike> _pending = const [];
   List<RentalWithBike> _rides = const [];
 
@@ -42,16 +54,24 @@ class AdminHomeTabState extends State<AdminHomeTab> {
 
   Future<void> _load() async {
     try {
-      final bikes = await widget.repo.fetchBikes();
-      final pending = await widget.repo.fetchPendingRentals();
-      final active = await widget.repo.fetchActiveRentalsWithBikes();
+      final bikesF = widget.repo.fetchBikes();
+      final pendingF = widget.repo.fetchPendingRentals();
+      final activeF = widget.repo.fetchActiveRentalsWithBikes();
+      final weekF = _analytics.loadReport(7);
+      final bikes = await bikesF;
+      final pending = await pendingF;
+      final active = await activeF;
+      ReportSnapshot? week;
+      try {
+        week = await weekF;
+      } catch (_) {
+        week = null;
+      }
       if (!mounted) return;
       setState(() {
-        _fleet = bikes.length;
-        _available = bikes.where((b) => b.status == 'available').length;
-        _rented = bikes.where((b) => b.status == 'rented').length;
-        _maintenance = bikes.where((b) => b.status == 'maintenance').length;
+        _bikes = [...bikes]..sort((a, b) => a.code.compareTo(b.code));
         _active = active.length;
+        _week = week;
         _pending = pending.take(5).toList();
         _rides = active.take(5).toList();
         _loading = false;
@@ -65,277 +85,785 @@ class AdminHomeTabState extends State<AdminHomeTab> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final isDark = cs.brightness == Brightness.dark;
-    final wide = MediaQuery.sizeOf(context).width >= 980;
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = adminWide(context);
+    final week = _week;
 
-    return ColoredBox(
-      color: cs.brightness == Brightness.dark
-          ? QrideBrand.night
-          : const Color(0xFFF3F6FB),
-      child: RefreshIndicator(
-        onRefresh: _load,
+    final kpis = [
+      _KpiCard(
+        label: 'Pending',
+        hint: widget.pendingCount > 0 ? 'Needs your approval' : 'All caught up',
+        value: '${widget.pendingCount}',
+        icon: Icons.inbox_rounded,
+        color: _orange,
+        alert: widget.pendingCount > 0,
+        onTap: () => widget.onOpenTab(2),
+      ),
+      _KpiCard(
+        label: 'Riding now',
+        hint: 'Active rentals',
+        value: '$_active',
+        icon: Icons.near_me_rounded,
         color: QrideBrand.accent,
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(wide ? 28 : 18, 22, wide ? 28 : 18, 36),
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+        onTap: () => widget.onOpenTab(3),
+      ),
+      _KpiCard(
+        label: 'Completed · 7d',
+        hint: week?.averageDuration == null
+            ? 'No timed rides yet'
+            : 'Avg ${formatRideDurationMinutes(week!.averageDuration!.inSeconds / 60)} per ride',
+        value: '${week?.completedCount ?? 0}',
+        icon: Icons.task_alt_rounded,
+        color: _green,
+        onTap: () => widget.onOpenTab(7),
+      ),
+      _KpiCard(
+        label: 'Collected · 7d',
+        hint: 'From completed rides',
+        value: _peso.format(week?.collected ?? 0),
+        icon: Icons.payments_rounded,
+        color: _pink,
+        onTap: () => widget.onOpenTab(7),
+      ),
+    ];
+
+    final fleet = _FleetCard(
+      bikes: _bikes,
+      wide: wide,
+      onOpenBikes: () => widget.onOpenTab(1),
+    );
+    final today = _TodayCard(week: week, fill: wide);
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: QrideBrand.accent,
+      child: ListView(
+        padding: adminPagePadding(context),
+        children: [
+          AdminContent(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                AdminPageHeader(
+                  title: 'Overview',
+                  subtitle: DateFormat('EEEE, MMMM d').format(DateTime.now()),
+                  trailing: Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Text(
-                        'Overview',
-                        style: theme.textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.8,
+                      if (wide) ...[
+                        _HeaderAction(
+                          icon: Icons.map_rounded,
+                          label: 'Live map',
+                          onTap: () => widget.onOpenTab(5),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _fleet == 0
-                            ? 'Campus fleet status'
-                            : '$_fleet bikes in the campus fleet',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: cs.onSurfaceVariant,
+                        _HeaderAction(
+                          icon: Icons.badge_rounded,
+                          label: 'Verify users',
+                          onTap: () => widget.onOpenTab(6),
+                        ),
+                      ],
+                      IconButton.filledTonal(
+                        tooltip: 'Refresh',
+                        onPressed: _load,
+                        icon: const Icon(Icons.refresh_rounded),
+                        style: IconButton.styleFrom(
+                          backgroundColor: cs.brightness == Brightness.dark
+                              ? Colors.white.withValues(alpha: 0.10)
+                              : Colors.white.withValues(alpha: 0.38),
+                          foregroundColor: QrideBrand.accent,
                         ),
                       ),
                     ],
                   ),
                 ),
-                TextButton.icon(
-                  onPressed: _load,
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Refresh'),
+                const SizedBox(height: 20),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 80),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else ...[
+                  if (width >= 860)
+                    Row(
+                      children: [
+                        for (var i = 0; i < kpis.length; i++) ...[
+                          if (i > 0) const SizedBox(width: 14),
+                          Expanded(child: kpis[i]),
+                        ],
+                      ],
+                    )
+                  else
+                    GridView.count(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 1.45,
+                      children: kpis,
+                    ),
+                  const SizedBox(height: 16),
+                  if (wide)
+                    SizedBox(
+                      height: 300,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(flex: 8, child: fleet),
+                          const SizedBox(width: 16),
+                          Expanded(flex: 4, child: today),
+                        ],
+                      ),
+                    )
+                  else ...[
+                    fleet,
+                    const SizedBox(height: 14),
+                    today,
+                  ],
+                  const SizedBox(height: 16),
+                  if (wide)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: _pendingPanel()),
+                        const SizedBox(width: 16),
+                        Expanded(child: _ridesPanel()),
+                      ],
+                    )
+                  else ...[
+                    _pendingPanel(),
+                    const SizedBox(height: 14),
+                    _ridesPanel(),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pendingPanel() => _QueuePanel(
+        title: 'Waiting for approval',
+        icon: Icons.hourglass_top_rounded,
+        color: _orange,
+        count: widget.pendingCount,
+        empty: 'No pending rental requests.',
+        emptyIcon: Icons.check_circle_outline_rounded,
+        items: _pending,
+        kind: 'pending',
+        onSeeAll: () => widget.onOpenTab(2),
+      );
+
+  Widget _ridesPanel() => _QueuePanel(
+        title: 'Rides in progress',
+        icon: Icons.near_me_rounded,
+        color: QrideBrand.accent,
+        count: _active,
+        empty: 'No active rides right now.',
+        emptyIcon: Icons.directions_bike_outlined,
+        items: _rides,
+        kind: 'active',
+        onSeeAll: () => widget.onOpenTab(3),
+      );
+}
+
+class _HeaderAction extends StatelessWidget {
+  const _HeaderAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 17),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: cs.onSurface,
+        backgroundColor: cs.brightness == Brightness.dark
+            ? Colors.white.withValues(alpha: 0.10)
+            : Colors.white.withValues(alpha: 0.38),
+        side: BorderSide(
+          color: Colors.white.withValues(
+            alpha: cs.brightness == Brightness.dark ? 0.18 : 0.7,
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+}
+
+// ── Fleet health ──────────────────────────────────────────────────────────────
+
+Color _bikeStatusColor(String status, ColorScheme cs) => switch (status) {
+      'available' => _green,
+      'rented' => QrideBrand.accent,
+      'maintenance' => cs.error,
+      _ => cs.outline,
+    };
+
+String _bikeStatusLabel(String status) => switch (status) {
+      'available' => 'Available',
+      'rented' => 'On rent',
+      'maintenance' => 'Maintenance',
+      _ => status,
+    };
+
+class _FleetCard extends StatelessWidget {
+  const _FleetCard({
+    required this.bikes,
+    required this.wide,
+    required this.onOpenBikes,
+  });
+
+  final List<Bike> bikes;
+  final bool wide;
+  final VoidCallback onOpenBikes;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final total = bikes.length;
+    int count(String s) => bikes.where((b) => b.status == s).length;
+    final available = count('available');
+    final rented = count('rented');
+    final maintenance = count('maintenance');
+    final other = total - available - rented - maintenance;
+    final segments = [
+      (label: 'Available', value: available, color: _green),
+      (label: 'On rent', value: rented, color: QrideBrand.accent),
+      (label: 'Maintenance', value: maintenance, color: cs.error),
+      if (other > 0) (label: 'Other', value: other, color: cs.outline),
+    ];
+    final readyPct = total == 0 ? 0 : (available / total * 100).round();
+
+    final summary = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              '$available',
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 44,
+                height: 1,
+                letterSpacing: -1.4,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 6, bottom: 5),
+              child: Text(
+                'of $total ready',
+                style: TextStyle(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: _green.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(99),
+              ),
+              child: Text(
+                '$readyPct% ready',
+                style: const TextStyle(
+                  color: _green,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(99),
+          child: SizedBox(
+            height: 10,
+            child: total == 0
+                ? ColoredBox(color: cs.surfaceContainerHighest)
+                : Row(
+                    children: [
+                      for (final s in segments)
+                        if (s.value > 0)
+                          Expanded(
+                            flex: s.value,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 1),
+                              color: s.color,
+                            ),
+                          ),
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        for (final s in segments)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 9),
+            child: Row(
+              children: [
+                Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: s.color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    s.label,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${s.value}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: s.value > 0 ? s.color : cs.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 22),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 64),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else ...[
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final four = constraints.maxWidth >= 860;
-                  final cards = [
-                    _KpiCard(
-                      label: 'Pending',
-                      hint: 'Need approval',
-                      value: '${widget.pendingCount}',
-                      icon: Icons.inbox_rounded,
-                      color: const Color(0xFFEA580C),
-                      onTap: () => widget.onOpenTab(2),
-                    ),
-                    _KpiCard(
-                      label: 'Active',
-                      hint: 'Rides now',
-                      value: '$_active',
-                      icon: Icons.near_me_rounded,
-                      color: QrideBrand.accent,
-                      onTap: () => widget.onOpenTab(3),
-                    ),
-                    _KpiCard(
-                      label: 'Available',
-                      hint: 'Ready to rent',
-                      value: '$_available',
-                      icon: Icons.pedal_bike_rounded,
-                      color: const Color(0xFF16A34A),
-                      onTap: () => widget.onOpenTab(1),
-                    ),
-                    _KpiCard(
-                      label: 'On rent',
-                      hint: 'Out on campus',
-                      value: '$_rented',
-                      icon: Icons.directions_bike_rounded,
-                      color: QrideBrand.accentDeep,
-                      onTap: () => widget.onOpenTab(1),
-                    ),
-                  ];
-                  if (four) {
-                    return Row(
-                      children: [
-                        for (var i = 0; i < cards.length; i++) ...[
-                          if (i > 0) const SizedBox(width: 14),
-                          Expanded(child: cards[i]),
-                        ],
-                      ],
-                    );
-                  }
-                  return Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(child: cards[0]),
-                          const SizedBox(width: 12),
-                          Expanded(child: cards[1]),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(child: cards[2]),
-                          const SizedBox(width: 12),
-                          Expanded(child: cards[3]),
-                        ],
-                      ),
-                    ],
-                  );
-                },
+          ),
+      ],
+    );
+
+    final flagged = [
+      for (final b in bikes)
+        if (b.status != 'available' && b.status != 'rented') b,
+    ];
+    final maxRows = wide ? 3 : 4;
+    final shown = flagged.take(maxRows).toList();
+    final hidden = flagged.length - shown.length;
+
+    final attention = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'NEEDS ATTENTION',
+          style: TextStyle(
+            color: cs.onSurfaceVariant,
+            fontWeight: FontWeight.w800,
+            fontSize: 11,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (total == 0)
+          _AttentionEmpty(
+            icon: Icons.pedal_bike_outlined,
+            color: cs.onSurfaceVariant,
+            title: 'No bikes yet',
+            subtitle: 'Add bikes to start tracking fleet health.',
+          )
+        else if (flagged.isEmpty)
+          const _AttentionEmpty(
+            icon: Icons.verified_rounded,
+            color: _green,
+            title: 'All bikes in service',
+            subtitle: 'Nothing is flagged for maintenance.',
+          )
+        else ...[
+          for (final b in shown)
+            _AttentionRow(bike: b, onTap: onOpenBikes),
+          if (hidden > 0)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onOpenBikes,
+                icon: const Icon(Icons.arrow_forward_rounded, size: 16),
+                label: Text('+$hidden more in Bikes'),
               ),
-              if (_maintenance > 0) ...[
-                const SizedBox(height: 14),
-                Material(
-                  color: cs.errorContainer.withValues(alpha: isDark ? 0.35 : 0.55),
-                  borderRadius: BorderRadius.circular(16),
-                  child: InkWell(
-                    onTap: () => widget.onOpenTab(1),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: cs.error.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Icon(Icons.build_rounded, color: cs.error),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              '$_maintenance bike${_maintenance == 1 ? '' : 's'} in maintenance',
-                              style: const TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-                        ],
-                      ),
-                    ),
+            ),
+        ],
+      ],
+    );
+
+    final header = Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: _green.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.pedal_bike_rounded, color: _green, size: 18),
+        ),
+        const SizedBox(width: 10),
+        const Text(
+          'Fleet health',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+        ),
+        if (maintenance > 0) ...[
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: cs.error.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.build_rounded, size: 12, color: cs.error),
+                const SizedBox(width: 4),
+                Text(
+                  '$maintenance need${maintenance == 1 ? 's' : ''} attention',
+                  style: TextStyle(
+                    color: cs.error,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11.5,
                   ),
                 ),
               ],
-              const SizedBox(height: 28),
-              Text(
-                'Shortcuts',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.3,
-                ),
-              ),
-              const SizedBox(height: 12),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final actions = [
-                    _ShortcutTile(
-                      icon: Icons.map_rounded,
-                      label: 'Live map',
-                      sub: 'Track riders',
-                      onTap: () => widget.onOpenTab(5),
-                    ),
-                    _ShortcutTile(
-                      icon: Icons.inbox_rounded,
-                      label: 'Requests',
-                      sub: 'Approve rentals',
-                      onTap: () => widget.onOpenTab(2),
-                    ),
-                    _ShortcutTile(
-                      icon: Icons.badge_rounded,
-                      label: 'Users',
-                      sub: 'Verify IDs',
-                      onTap: () => widget.onOpenTab(6),
-                    ),
-                    _ShortcutTile(
-                      icon: Icons.insights_rounded,
-                      label: 'Reports',
-                      sub: 'Usage stats',
-                      onTap: () => widget.onOpenTab(7),
-                    ),
-                  ];
-                  if (constraints.maxWidth >= 720) {
-                    return Row(
-                      children: [
-                        for (var i = 0; i < actions.length; i++) ...[
-                          if (i > 0) const SizedBox(width: 12),
-                          Expanded(child: actions[i]),
-                        ],
-                      ],
-                    );
-                  }
-                  return Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: actions
-                        .map(
-                          (a) => SizedBox(
-                            width: (constraints.maxWidth - 10) / 2,
-                            child: a,
-                          ),
-                        )
-                        .toList(),
-                  );
-                },
-              ),
-              const SizedBox(height: 28),
-              if (wide)
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _QueuePanel(
-                        title: 'Waiting for approval',
-                        empty: 'No pending rental requests.',
-                        emptyIcon: Icons.check_circle_outline_rounded,
-                        items: _pending,
-                        kind: 'pending',
-                        onSeeAll: () => widget.onOpenTab(2),
+            ),
+          ),
+        ],
+        const Spacer(),
+        TextButton(onPressed: onOpenBikes, child: const Text('Manage bikes')),
+      ],
+    );
+
+    return _Panel(
+      padding: const EdgeInsets.fromLTRB(18, 14, 14, 16),
+      child: wide
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                const SizedBox(height: 12),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(width: 280, child: summary),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        child: VerticalDivider(
+                          width: 1,
+                          color: cs.outlineVariant.withValues(alpha: 0.35),
+                        ),
                       ),
+                      Expanded(child: attention),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                const SizedBox(height: 12),
+                summary,
+                Divider(
+                  height: 24,
+                  color: cs.outlineVariant.withValues(alpha: 0.35),
+                ),
+                attention,
+              ],
+            ),
+    );
+  }
+}
+
+class _AttentionRow extends StatelessWidget {
+  const _AttentionRow({required this.bike, required this.onTap});
+
+  final Bike bike;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final color = _bikeStatusColor(bike.status, cs);
+    final label = bike.label?.trim().isNotEmpty == true ? bike.label! : null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            height: 40,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.build_rounded, size: 15, color: color),
+                  const SizedBox(width: 10),
+                  Text(
+                    bike.code,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _QueuePanel(
-                        title: 'Rides in progress',
-                        empty: 'No active rides right now.',
-                        emptyIcon: Icons.directions_bike_outlined,
-                        items: _rides,
-                        kind: 'active',
-                        onSeeAll: () => widget.onOpenTab(3),
+                  ),
+                  if (label != null) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 12.5,
+                        ),
                       ),
                     ),
                   ],
-                )
-              else ...[
-                _QueuePanel(
-                  title: 'Waiting for approval',
-                  empty: 'No pending rental requests.',
-                  emptyIcon: Icons.check_circle_outline_rounded,
-                  items: _pending,
-                  kind: 'pending',
-                  onSeeAll: () => widget.onOpenTab(2),
-                ),
-                const SizedBox(height: 16),
-                _QueuePanel(
-                  title: 'Rides in progress',
-                  empty: 'No active rides right now.',
-                  emptyIcon: Icons.directions_bike_outlined,
-                  items: _rides,
-                  kind: 'active',
-                  onSeeAll: () => widget.onOpenTab(3),
-                ),
-              ],
-            ],
-          ],
+                  const Spacer(),
+                  Text(
+                    _bikeStatusLabel(bike.status),
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _AttentionEmpty extends StatelessWidget {
+  const _AttentionEmpty({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Today ─────────────────────────────────────────────────────────────────────
+
+class _TodayCard extends StatelessWidget {
+  const _TodayCard({required this.week, required this.fill});
+
+  final ReportSnapshot? week;
+
+  /// Stretch the trend chart to the card height (wide layout).
+  final bool fill;
+
+  @override
+  Widget build(BuildContext context) {
+    final daily = week?.daily ?? const <ReportDayPoint>[];
+    final today = daily.isEmpty ? null : daily.last;
+
+    final chart = daily.isEmpty
+        ? const SizedBox(height: 72)
+        : ReportLineChart(
+            height: 72,
+            showAxes: false,
+            onDark: true,
+            labels: [for (final d in daily) DateFormat('EEE').format(d.day)],
+            series: [
+              ReportLineSeries(
+                label: 'Rides',
+                color: Colors.white,
+                values: [for (final d in daily) d.completed.toDouble()],
+              ),
+            ],
+            tooltipTitle: (i) => DateFormat('EEEE, MMM d').format(daily[i].day),
+            tooltipLines: (i) => [
+              (
+                label: 'Rides',
+                value: '${daily[i].completed}',
+                color: const Color(0xFF22C55E),
+              ),
+              (
+                label: 'Collected',
+                value: _pesoExact.format(daily[i].collected),
+                color: _pink,
+              ),
+            ],
+          );
+
+    return GlassPanel(
+      tint: const Color(0xB30A4DB8),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+      child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Today',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    DateFormat('MMM d').format(DateTime.now()),
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.75),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _todayRow(
+                Icons.task_alt_rounded,
+                'Rides completed',
+                '${today?.completed ?? 0}',
+              ),
+              _todayRow(
+                Icons.payments_rounded,
+                'Collected',
+                _peso.format(today?.collected ?? 0),
+              ),
+              _todayRow(
+                Icons.timer_outlined,
+                'Ride time',
+                (today?.rideMinutes ?? 0) <= 0
+                    ? '0m'
+                    : formatRideDurationMinutes(today!.rideMinutes),
+              ),
+              if (fill) const Spacer() else const SizedBox(height: 8),
+              Text(
+                'Last 7 days · hover for details',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              chart,
+            ],
+          ),
+    );
+  }
+
+  static Widget _todayRow(IconData icon, String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.8)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 17,
+                letterSpacing: -0.3,
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+// ── Shared panels ─────────────────────────────────────────────────────────────
+
+class _Panel extends StatelessWidget {
+  const _Panel({required this.child, this.onTap, this.padding});
+
+  final Widget child;
+  final VoidCallback? onTap;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      onTap: onTap,
+      padding: padding,
+      child: child,
     );
   }
 }
@@ -348,6 +876,7 @@ class _KpiCard extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.alert = false,
   });
 
   final String label;
@@ -356,145 +885,89 @@ class _KpiCard extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                color.withValues(alpha: 0.16),
-                Theme.of(context).colorScheme.surface,
-              ],
-            ),
-            border: Border.all(color: color.withValues(alpha: 0.18)),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.08),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon, color: color, size: 22),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  value,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -1,
-                        color: color,
-                        height: 1,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  hint,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ShortcutTile extends StatelessWidget {
-  const _ShortcutTile({
-    required this.icon,
-    required this.label,
-    required this.sub,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final String sub;
-  final VoidCallback onTap;
+  final bool alert;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Material(
-      color: cs.surface,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.35)),
+    return _Panel(
+      onTap: onTap,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: color, size: 22),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: QrideBrand.accent.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: QrideBrand.accent, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      label,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    Text(
-                      sub,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: cs.onSurfaceVariant,
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                          color: cs.onSurfaceVariant,
+                        ),
                       ),
                     ),
+                    if (alert) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: color.withValues(alpha: 0.5),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-              Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-            ],
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 26,
+                      height: 1.05,
+                      letterSpacing: -0.8,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  hint,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11.5, color: color),
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -503,6 +976,9 @@ class _ShortcutTile extends StatelessWidget {
 class _QueuePanel extends StatelessWidget {
   const _QueuePanel({
     required this.title,
+    required this.icon,
+    required this.color,
+    required this.count,
     required this.empty,
     required this.emptyIcon,
     required this.items,
@@ -511,6 +987,9 @@ class _QueuePanel extends StatelessWidget {
   });
 
   final String title;
+  final IconData icon;
+  final Color color;
+  final int count;
   final String empty;
   final IconData emptyIcon;
   final List<RentalWithBike> items;
@@ -520,91 +999,152 @@ class _QueuePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.28)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+    return _Panel(
+      padding: const EdgeInsets.fromLTRB(16, 14, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const Spacer(),
-                TextButton(onPressed: onSeeAll, child: const Text('See all')),
-              ],
-            ),
-            if (items.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 18, 16, 18),
-                child: Row(
-                  children: [
-                    Icon(emptyIcon, color: cs.onSurfaceVariant),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        empty,
-                        style: TextStyle(
-                          color: cs.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                child: Icon(icon, color: color, size: 17),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5),
+              ),
+              const SizedBox(width: 8),
+              if (count > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
                     ),
-                  ],
+                  ),
                 ),
-              )
-            else
-              ...items.map((r) => _QueueTile(row: r, kind: kind)),
-          ],
-        ),
+              const Spacer(),
+              TextButton(onPressed: onSeeAll, child: const Text('See all')),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 16, 12, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    emptyIcon,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    empty,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...items.map((r) => _QueueTile(row: r, kind: kind, color: color)),
+        ],
       ),
     );
   }
 }
 
 class _QueueTile extends StatelessWidget {
-  const _QueueTile({required this.row, required this.kind});
+  const _QueueTile({required this.row, required this.kind, required this.color});
 
   final RentalWithBike row;
   final String kind;
+  final Color color;
+
+  String _since(DateTime t) {
+    final d = DateTime.now().difference(t.toLocal());
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+    if (d.inHours < 24) return '${d.inHours}h ${d.inMinutes % 60}m ago';
+    return DateFormat('MMM d, h:mm a').format(t.toLocal());
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final when = DateFormat('h:mm a').format(row.rental.startedAt.toLocal());
-    return ListTile(
-      contentPadding: const EdgeInsets.only(right: 8),
-      leading: CircleAvatar(
-        backgroundColor: QrideBrand.accent.withValues(alpha: 0.12),
-        foregroundColor: QrideBrand.accent,
-        child: Icon(
-          kind == 'pending'
-              ? Icons.hourglass_top_rounded
-              : Icons.near_me_rounded,
-          size: 20,
-        ),
+    final rider = row.riderDisplay;
+    final initial = rider.isEmpty ? '?' : rider.characters.first.toUpperCase();
+    final since = kind == 'active'
+        ? (row.rental.approvedAt ?? row.rental.startedAt)
+        : row.rental.startedAt;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 6, 6, 6),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: color.withValues(alpha: 0.12),
+            foregroundColor: color,
+            child: Text(
+              initial,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  rider,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  row.bikeDisplay,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text(
+              _since(since),
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
       ),
-      title: Text(
-        row.bikeDisplay,
-        style: const TextStyle(fontWeight: FontWeight.w800),
-      ),
-      subtitle: Text('${row.riderDisplay} · $when'),
     );
   }
 }

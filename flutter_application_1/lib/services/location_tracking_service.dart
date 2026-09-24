@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform, ValueNotifier;
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'device_compass.dart';
 import 'supabase_client.dart';
@@ -57,17 +58,19 @@ class LocationTrackingService {
 
   /// Hard timeout per Supabase REST call. If the network or PostgREST hangs,
   /// the call is aborted and surfaced as an error.
-  static const Duration _writeTimeout = Duration(seconds: 8);
-  static const Duration _streamStall = Duration(seconds: 10);
+  static const Duration _writeTimeout = Duration(seconds: 12);
+  static const Duration _streamStall = Duration(seconds: 12);
+
   /// Backup GPS poll. Network uploads are throttled separately via [minInterval].
-  static const Duration _pollEvery = Duration(seconds: 3);
+  static const Duration _pollEvery = Duration(seconds: 5);
 
   /// Ensures location service is on and permission is granted.
   Future<void> ensurePermissions() async {
     final enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) {
       throw StateError(
-          'Location services are turned off. Please enable GPS and try again.');
+        'Location services are turned off. Please enable GPS and try again.',
+      );
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
@@ -76,12 +79,54 @@ class LocationTrackingService {
     }
     if (permission == LocationPermission.denied) {
       throw StateError(
-          'Location permission denied. Please allow location access for QRide.');
+        'Location permission denied. Please allow location access for QRide.',
+      );
     }
     if (permission == LocationPermission.deniedForever) {
       throw StateError(
-          'Location permission permanently denied. Enable it in app Settings.');
+        'Location permission permanently denied. Enable it in app Settings.',
+      );
     }
+
+    // Android 13+: the persistent "Rental in progress" notice must be allowed
+    // or the foreground GPS service is killed in the background.
+    final notify = await Permission.notification.status;
+    if (notify.isDenied) {
+      await Permission.notification.request();
+    }
+
+    // After "while using", ask for Always so iOS / some Androids keep GPS
+    // after the rider leaves QRide. While-in-use + the foreground service
+    // is enough if they decline.
+    if (permission == LocationPermission.whileInUse) {
+      final always = await Permission.locationAlways.status;
+      if (always.isDenied) {
+        await Permission.locationAlways.request();
+      }
+    }
+
+    // Screen-off / pocket: Android Doze will freeze GPS unless the rider
+    // allows QRide to run unrestricted. Decline is OK; FGS still helps.
+    final battery = await Permission.ignoreBatteryOptimizations.status;
+    if (battery.isDenied) {
+      await Permission.ignoreBatteryOptimizations.request();
+    }
+  }
+
+  /// Screen locked or QRide sent to background — keep sharing, do not stop.
+  Future<void> keepSharingWithScreenOff() async {
+    if (_rentalId == null) return;
+    final pos = _lastPosition;
+    if (pos != null) unawaited(_attemptWrite(pos, force: true));
+  }
+
+  /// Called when the app returns from the background. Restarts the GPS
+  /// stream and immediately shares the last known point.
+  Future<void> resumeFromBackground() async {
+    if (_rentalId == null) return;
+    await _restartStream();
+    final pos = _lastPosition;
+    if (pos != null) unawaited(_attemptWrite(pos, force: true));
   }
 
   LocationSettings _locationSettings({bool forceAndroidManager = false}) {
@@ -103,7 +148,8 @@ class LocationTrackingService {
         forceLocationManager: forceAndroidManager,
         intervalDuration: const Duration(seconds: 1),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationText: 'QRide is tracking your ride location.',
+          notificationText:
+              'Sharing your ride location. This stays on with the screen off.',
           notificationTitle: 'Rental in progress',
           enableWakeLock: true,
           setOngoing: true,
@@ -169,23 +215,25 @@ class LocationTrackingService {
 
   void _listenStream({required bool forceAndroidManager}) {
     _sub?.cancel();
-    _sub = Geolocator.getPositionStream(
-      locationSettings:
-          _locationSettings(forceAndroidManager: forceAndroidManager),
-    ).listen(
-      (pos) => _ingest(pos, source: 'stream'),
-      onError: (Object e) {
-        lastError.value = 'GPS error: $e';
-        // ignore: avoid_print
-        print('[LocationTracking] stream error: $e');
-        unawaited(_restartStream());
-      },
-      onDone: () {
-        // ignore: avoid_print
-        print('[LocationTracking] stream done — restarting');
-        unawaited(_restartStream());
-      },
-    );
+    _sub =
+        Geolocator.getPositionStream(
+          locationSettings: _locationSettings(
+            forceAndroidManager: forceAndroidManager,
+          ),
+        ).listen(
+          (pos) => _ingest(pos, source: 'stream'),
+          onError: (Object e) {
+            lastError.value = 'GPS error: $e';
+            // ignore: avoid_print
+            print('[LocationTracking] stream error: $e');
+            unawaited(_restartStream());
+          },
+          onDone: () {
+            // ignore: avoid_print
+            print('[LocationTracking] stream done — restarting');
+            unawaited(_restartStream());
+          },
+        );
   }
 
   void _startPoll() {
@@ -253,7 +301,9 @@ class LocationTrackingService {
       );
       if (jumped > 2000 && pos.accuracy > 80) {
         // ignore: avoid_print
-        print('[LocationTracking] drop outlier jump ${jumped.toStringAsFixed(0)}m');
+        print(
+          '[LocationTracking] drop outlier jump ${jumped.toStringAsFixed(0)}m',
+        );
         return;
       }
     }
@@ -333,6 +383,7 @@ class LocationTrackingService {
       'lng': pos.longitude,
       'accuracy_m': pos.accuracy,
       'heading': headingDeg,
+      // Always UTC with Z so the admin map does not mis-read local time.
       'recorded_at': now.toUtc().toIso8601String(),
     };
 
@@ -371,14 +422,17 @@ class LocationTrackingService {
       lastError.value = null;
       // ignore: avoid_print
       print(
-          '[LocationTracking] write OK lat=${pos.latitude.toStringAsFixed(5)} '
-          'lng=${pos.longitude.toStringAsFixed(5)} '
-          'hdg=${headingDeg?.toStringAsFixed(0) ?? '-'}');
+        '[LocationTracking] write OK lat=${pos.latitude.toStringAsFixed(5)} '
+        'lng=${pos.longitude.toStringAsFixed(5)} '
+        'hdg=${headingDeg?.toStringAsFixed(0) ?? '-'}',
+      );
     } on TimeoutException {
       lastError.value =
           'Network timeout while sharing location. Check rider\'s internet.';
       // ignore: avoid_print
-      print('[LocationTracking] write TIMEOUT after ${_writeTimeout.inSeconds}s');
+      print(
+        '[LocationTracking] write TIMEOUT after ${_writeTimeout.inSeconds}s',
+      );
     } catch (e) {
       lastError.value = _humanizeError(e);
       // ignore: avoid_print

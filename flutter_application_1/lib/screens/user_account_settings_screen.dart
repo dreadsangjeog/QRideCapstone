@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../main.dart' show themeNotifier;
+import '../theme/theme_controller.dart';
 import '../utils/account_management.dart';
 import '../utils/logout_guard.dart';
 import '../widgets/user_portal_chrome.dart';
@@ -78,8 +78,7 @@ class UserAccountSettingsScreen extends StatelessWidget {
                       value: isDark,
                       activeThumbColor: cs.primary,
                       onChanged: (on) {
-                        themeNotifier.value =
-                            on ? ThemeMode.dark : ThemeMode.light;
+                        setThemeMode(on ? ThemeMode.dark : ThemeMode.light);
                       },
                     );
                   },

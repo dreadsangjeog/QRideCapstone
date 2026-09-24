@@ -1,5 +1,7 @@
 part of 'admin_map_tab.dart';
 
+enum _RiderSignal { waiting, live, delayed, lost }
+
 // ── Data model ────────────────────────────────────────────────────────────────
 
 class _MarkerRow {
@@ -25,23 +27,58 @@ class _MarkerRow {
   final DateTime? recordedAt;
   final double? heading;
 
-  /// One missed 3-second GPS write → treat as no signal (idle).
-  static const staleAfter = Duration(seconds: 4);
+  /// Rider writes about every 5s. Allow a few missed uploads + phone clock
+  /// skew before we call the pin stale.
+  static const liveWithin = Duration(seconds: 20);
+  static const delayedWithin = Duration(seconds: 45);
 
-  bool get isStale {
+  Duration? get age {
     final at = recordedAt;
-    if (at == null) return true;
-    return DateTime.now().toUtc().difference(at.toUtc()) > staleAfter;
+    if (at == null) return null;
+    final d = DateTime.now().toUtc().difference(at.toUtc());
+    return d.isNegative ? Duration.zero : d;
   }
 
+  _RiderSignal get signal {
+    final a = age;
+    if (a == null) return _RiderSignal.waiting;
+    if (a <= liveWithin) return _RiderSignal.live;
+    if (a <= delayedWithin) return _RiderSignal.delayed;
+    return _RiderSignal.lost;
+  }
+
+  bool get isStale =>
+      signal == _RiderSignal.lost || signal == _RiderSignal.waiting;
+  bool get isLive => signal == _RiderSignal.live;
+
   String get freshnessLabel {
-    final at = recordedAt;
-    if (at == null) return 'No signal yet';
-    final age = DateTime.now().toUtc().difference(at.toUtc());
-    if (age.inSeconds < 4) return 'Live now';
-    if (age.inSeconds < 60) return 'Last seen ${age.inSeconds}s ago';
-    if (age.inMinutes < 60) return 'Last seen ${age.inMinutes}m ago';
-    return 'Last seen ${age.inHours}h ago';
+    switch (signal) {
+      case _RiderSignal.waiting:
+        return 'Waiting for first GPS share';
+      case _RiderSignal.live:
+        return 'Sharing location';
+      case _RiderSignal.delayed:
+        return 'Last update ${_formatAge(age!)} ago';
+      case _RiderSignal.lost:
+        return 'No update for ${_formatAge(age!)}';
+    }
+  }
+
+  static String _formatAge(Duration age) {
+    if (age.inSeconds < 60) return '${age.inSeconds}s';
+    if (age.inMinutes < 60) return '${age.inMinutes}m';
+    return '${age.inHours}h';
+  }
+
+  static DateTime? parseRecordedAt(Object? raw) {
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    if (s.isEmpty) return null;
+    final hasZone =
+        s.endsWith('Z') ||
+        RegExp(r'[+-]\d{2}:\d{2}$').hasMatch(s) ||
+        RegExp(r'[+-]\d{4}$').hasMatch(s);
+    return DateTime.tryParse(hasZone ? s : '${s}Z');
   }
 
   static _MarkerRow? fromJoined(Map<String, dynamic> json) {
@@ -64,9 +101,7 @@ class _MarkerRow {
         lat: (json['lat'] as num).toDouble(),
         lng: (json['lng'] as num).toDouble(),
         accuracyM: accRaw == null ? null : (accRaw as num).toDouble(),
-        recordedAt: json['recorded_at'] == null
-            ? null
-            : DateTime.tryParse(json['recorded_at'].toString()),
+        recordedAt: parseRecordedAt(json['recorded_at']),
         heading: json['heading'] == null
             ? null
             : (json['heading'] as num).toDouble(),

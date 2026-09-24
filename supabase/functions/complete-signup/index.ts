@@ -19,6 +19,9 @@ Deno.serve(async (req) => {
     const username = String(body.username ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
     const otp = String(body.otp ?? "").trim();
+    const firstName = String(body.first_name ?? "").trim().replace(/\s+/g, " ");
+    const middleName = String(body.middle_name ?? "").trim().replace(/\s+/g, " ");
+    const lastName = String(body.last_name ?? "").trim().replace(/\s+/g, " ");
 
     if (!email || !username || !password || !otp) {
       return json({ error: "Email, username, password, and code are required." }, 400);
@@ -33,7 +36,9 @@ Deno.serve(async (req) => {
 
     const { data: row, error: selErr } = await admin
       .from("pending_signups")
-      .select("username,password_hash,otp_hash,expires_at")
+      .select(
+        "username,password_hash,otp_hash,expires_at,first_name,middle_name,last_name",
+      )
       .eq("email", email)
       .maybeSingle();
 
@@ -59,6 +64,13 @@ Deno.serve(async (req) => {
 
     if (String(row.username) !== username) {
       return json({ error: "Username does not match this signup." }, 400);
+    }
+    if (
+      String(row.first_name ?? "") !== firstName ||
+      String(row.middle_name ?? "") !== middleName ||
+      String(row.last_name ?? "") !== lastName
+    ) {
+      return json({ error: "Name does not match this signup. Request a new code." }, 400);
     }
 
     if (!bcrypt.compareSync(password, String(row.password_hash))) {
@@ -98,7 +110,12 @@ Deno.serve(async (req) => {
       email,
       password,
       email_confirm: true,
-      user_metadata: { username },
+      user_metadata: {
+        username,
+        first_name: firstName,
+        middle_name: middleName,
+        last_name: lastName,
+      },
     });
 
     if (createErr || !created?.user) {

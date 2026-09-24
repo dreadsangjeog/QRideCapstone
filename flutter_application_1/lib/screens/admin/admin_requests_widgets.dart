@@ -24,19 +24,10 @@ class _RequestCard extends StatelessWidget {
         ? '${r.plannedMinutes ~/ 60}h'
         : '${r.plannedMinutes ~/ 60}h ${r.plannedMinutes % 60}m';
 
-    return Material(
-      color: cs.surface.withValues(alpha: 0.92),
-      elevation: 0,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: cs.outlineVariant.withValues(alpha: 0.4),
-          ),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return GlassPanel(
+      radius: 20,
+      padding: const EdgeInsets.all(16),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Header: rider + bike
@@ -125,7 +116,10 @@ class _RequestCard extends StatelessWidget {
 
             FilledButton.icon(
               style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: onApprove,
               icon: const Icon(Icons.check_rounded, size: 18),
@@ -133,7 +127,6 @@ class _RequestCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
     );
   }
 }

@@ -3,6 +3,8 @@ import 'package:intl/intl.dart';
 
 import '../../models/rental_with_bike.dart';
 import '../../services/admin_repository.dart';
+import '../../widgets/qride_glass.dart';
+import 'admin_layout.dart';
 
 part 'admin_requests_widgets.dart';
 
@@ -128,14 +130,39 @@ class AdminRequestsTabState extends State<AdminRequestsTab> {
             );
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: requests.length,
-            separatorBuilder: (context, _) => const SizedBox(height: 10),
-            itemBuilder: (context, i) => _RequestCard(
-              row: requests[i],
-              onApprove: () => _approve(requests[i]),
-            ),
+          return ListView(
+            padding: adminPagePadding(context),
+            children: [
+              AdminContent(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AdminPageHeader(
+                      title: 'Rental requests',
+                      subtitle:
+                          '${requests.length} waiting · oldest first · the bike is marked rented when you accept',
+                      trailing: IconButton(
+                        tooltip: 'Refresh',
+                        onPressed: refresh,
+                        icon: const Icon(Icons.refresh_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AdminCardGrid(
+                      minItemWidth: 360,
+                      spacing: 12,
+                      children: [
+                        for (final row in requests)
+                          _RequestCard(
+                            row: row,
+                            onApprove: () => _approve(row),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           );
         },
       ),

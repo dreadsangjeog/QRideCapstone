@@ -6,7 +6,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../services/device_compass.dart';
+import '../services/location_tracking_service.dart';
 import '../services/rental_repository.dart';
+import '../services/ride_location_controller.dart';
 import '../theme/brand.dart';
 import '../widgets/heading_map_pin.dart';
 import '../widgets/qride_map_tiles.dart';
@@ -77,7 +79,8 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen> {
     try {
       final on = await Geolocator.isLocationServiceEnabled();
       if (!on) {
-        if (mounted) setState(() => _locationHint = 'Turn on GPS to see yourself');
+        if (mounted)
+          setState(() => _locationHint = 'Turn on GPS to see yourself');
         return;
       }
       var perm = await Geolocator.checkPermission();
@@ -87,14 +90,18 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen> {
       if (perm == LocationPermission.denied ||
           perm == LocationPermission.deniedForever) {
         if (mounted) {
-          setState(() => _locationHint = 'Allow location to show you on the map');
+          setState(
+            () => _locationHint = 'Allow location to show you on the map',
+          );
         }
         return;
       }
       if (mounted) setState(() => _locationHint = null);
 
       final first = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
       _applyPosition(first);
 
@@ -123,8 +130,9 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen> {
 
   void _applyPosition(Position pos) {
     _position = pos;
-    final gpsHeading =
-        pos.heading >= 0 && pos.heading <= 360 ? pos.heading : null;
+    final gpsHeading = pos.heading >= 0 && pos.heading <= 360
+        ? pos.heading
+        : null;
     _pose.setTarget(LatLng(pos.latitude, pos.longitude), gpsHeading);
     if (mounted) setState(() {});
   }
@@ -203,6 +211,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen> {
                 if (_hasActiveRide || _hasPendingRide)
                   _RideStatusChip(
                     riding: _hasActiveRide,
+                    tracking: RideLocationScope.maybeOf(context)?.tracking,
                     onTap: () => RiderNavScope.maybeOf(context)?.openPage(1),
                   ),
                 if ((_hasActiveRide || _hasPendingRide) &&
@@ -257,15 +266,54 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen> {
 }
 
 class _RideStatusChip extends StatelessWidget {
-  const _RideStatusChip({required this.riding, required this.onTap});
+  const _RideStatusChip({
+    required this.riding,
+    required this.onTap,
+    this.tracking,
+  });
 
   final bool riding;
   final VoidCallback onTap;
+  final LocationTrackingService? tracking;
 
   @override
   Widget build(BuildContext context) {
-    final color = riding ? QrideBrand.accent : const Color(0xFFD97706);
-    final label = riding ? 'Ride in progress' : 'Waiting for approval';
+    final tracking = this.tracking;
+    if (!riding || tracking == null) {
+      return _chip(
+        color: riding ? QrideBrand.accent : const Color(0xFFD97706),
+        label: riding ? 'Ride in progress' : 'Waiting for approval',
+      );
+    }
+    return ValueListenableBuilder<String?>(
+      valueListenable: tracking.lastError,
+      builder: (context, err, _) {
+        return ValueListenableBuilder<DateTime?>(
+          valueListenable: tracking.lastWriteAt,
+          builder: (context, writeAt, _) {
+            if (err != null) {
+              return _chip(
+                color: const Color(0xFFDC2626),
+                label: 'Location not reaching admin',
+              );
+            }
+            if (writeAt == null) {
+              return _chip(
+                color: QrideBrand.accent,
+                label: 'Starting location share…',
+              );
+            }
+            return _chip(
+              color: const Color(0xFF16A34A),
+              label: 'Sharing location with admin',
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _chip({required Color color, required String label}) {
     return Material(
       color: Colors.white.withValues(alpha: 0.96),
       elevation: 6,
@@ -282,18 +330,12 @@ class _RideStatusChip extends StatelessWidget {
               Container(
                 width: 8,
                 height: 8,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
               ),
               const SizedBox(width: 8),
               Text(
                 label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: color,
-                ),
+                style: TextStyle(fontWeight: FontWeight.w800, color: color),
               ),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right_rounded, size: 18, color: color),

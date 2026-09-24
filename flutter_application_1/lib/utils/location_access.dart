@@ -49,13 +49,19 @@ Future<bool> ensureLocationAccessForRental(BuildContext context) async {
 
   if (permission == LocationPermission.whileInUse ||
       permission == LocationPermission.always) {
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+    if (permission == LocationPermission.whileInUse &&
+        await Permission.locationAlways.isDenied) {
+      await Permission.locationAlways.request();
+    }
     return true;
   }
 
   if (!context.mounted) return false;
 
-  final permanentlyDenied =
-      permission == LocationPermission.deniedForever;
+  final permanentlyDenied = permission == LocationPermission.deniedForever;
 
   await showDialog<void>(
     context: context,
@@ -71,10 +77,10 @@ Future<bool> ensureLocationAccessForRental(BuildContext context) async {
         content: Text(
           permanentlyDenied
               ? 'QRide cannot rent a bike without location access. '
-                  'Enable location permission for QRide in your device settings, '
-                  'then try again.'
+                    'Enable location permission for QRide in your device settings, '
+                    'then try again.'
               : 'QRide needs location access to track your ride and show your '
-                  'position to the admin. Please allow location permission to continue.',
+                    'position to the admin. Please allow location permission to continue.',
         ),
         actions: [
           TextButton(

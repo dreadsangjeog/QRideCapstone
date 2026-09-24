@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../main.dart' show themeNotifier;
+import '../theme/theme_controller.dart';
 import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
+import '../services/kyc_repository.dart';
+import '../utils/auth_validators.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_generate_qr_screen.dart';
@@ -26,11 +28,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   StreamSubscription<AuthState>? _authSub;
   bool _adminResolved = false;
   bool _isAdmin = false;
+  final _kyc = KycRepository();
+  final _nameFormKey = GlobalKey<FormState>();
+  final _firstName = TextEditingController();
+  final _middleName = TextEditingController();
+  final _lastName = TextEditingController();
+  KycProfile? _profile;
+  bool _savingName = false;
 
   @override
   void initState() {
     super.initState();
     _refreshAdminRole();
+    unawaited(_loadProfile());
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
       _refreshAdminRole();
     });
@@ -45,9 +55,49 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     });
   }
 
+  Future<void> _loadProfile() async {
+    try {
+      final profile = await _kyc.fetchMine();
+      if (!mounted) return;
+      _firstName.text = profile.firstName ?? '';
+      _middleName.text = profile.middleName ?? '';
+      _lastName.text = profile.lastName ?? '';
+      setState(() => _profile = profile);
+    } catch (_) {}
+  }
+
+  Future<void> _saveName() async {
+    if (_profile?.isVerified == true) return;
+    if (!(_nameFormKey.currentState?.validate() ?? false)) return;
+    setState(() => _savingName = true);
+    try {
+      await _kyc.updateLegalName(
+        firstName: _firstName.text,
+        middleName: _middleName.text,
+        lastName: _lastName.text,
+      );
+      if (!mounted) return;
+      await _loadProfile();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Name saved. It will be matched to your ID.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save name: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingName = false);
+    }
+  }
+
   @override
   void dispose() {
     _authSub?.cancel();
+    _firstName.dispose();
+    _middleName.dispose();
+    _lastName.dispose();
     super.dispose();
   }
 
@@ -185,6 +235,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 18),
+              _LegalNameCard(
+                formKey: _nameFormKey,
+                firstName: _firstName,
+                middleName: _middleName,
+                lastName: _lastName,
+                locked: _profile?.isVerified == true,
+                saving: _savingName,
+                onSave: _saveName,
+              ),
               const SizedBox(height: 28),
               const PortalSectionLabel('Settings'),
               PolishedSectionCard(
@@ -287,8 +347,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           value: isDark,
                           activeThumbColor: cs.primary,
                           onChanged: (on) {
-                            themeNotifier.value =
-                                on ? ThemeMode.dark : ThemeMode.light;
+                            setThemeMode(
+                              on ? ThemeMode.dark : ThemeMode.light,
+                            );
                           },
                         );
                       },
@@ -440,6 +501,96 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+class _LegalNameCard extends StatelessWidget {
+  const _LegalNameCard({
+    required this.formKey,
+    required this.firstName,
+    required this.middleName,
+    required this.lastName,
+    required this.locked,
+    required this.saving,
+    required this.onSave,
+  });
+
+  final GlobalKey<FormState> formKey;
+  final TextEditingController firstName;
+  final TextEditingController middleName;
+  final TextEditingController lastName;
+  final bool locked;
+  final bool saving;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const PortalSectionLabel('Legal name'),
+        PolishedSectionCard(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    locked
+                        ? 'Locked after ID verification. This name was matched to your ID.'
+                        : 'Used to match the ID you upload. You can edit it until you are verified.',
+                    style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: firstName,
+                    enabled: !locked && !saving,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(labelText: 'First name'),
+                    validator: (v) =>
+                        AuthValidators.legalName(v, label: 'First name'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: middleName,
+                    enabled: !locked && !saving,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      labelText: 'Middle name',
+                      hintText: 'Optional',
+                    ),
+                    validator: (v) => AuthValidators.legalName(
+                      v,
+                      label: 'Middle name',
+                      required: false,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: lastName,
+                    enabled: !locked && !saving,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(labelText: 'Last name'),
+                    validator: (v) =>
+                        AuthValidators.legalName(v, label: 'Last name'),
+                  ),
+                  if (!locked) ...[
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      onPressed: saving ? null : onSave,
+                      child: Text(saving ? 'Saving…' : 'Save name'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

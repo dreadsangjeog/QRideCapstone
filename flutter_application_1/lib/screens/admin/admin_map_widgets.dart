@@ -6,6 +6,7 @@ class _StatusCard extends StatelessWidget {
   const _StatusCard({
     required this.riderCount,
     required this.liveCount,
+    required this.delayedCount,
     required this.staleCount,
     required this.lastRefresh,
     required this.loading,
@@ -16,6 +17,7 @@ class _StatusCard extends StatelessWidget {
 
   final int riderCount;
   final int liveCount;
+  final int delayedCount;
   final int staleCount;
   final DateTime? lastRefresh;
   final bool loading;
@@ -34,22 +36,20 @@ class _StatusCard extends StatelessWidget {
     String title;
     if (riderCount == 0) {
       title = 'No active riders';
+    } else if (staleCount == 0 && delayedCount == 0) {
+      title = '$liveCount rider${liveCount == 1 ? '' : 's'} sharing location';
+    } else if (liveCount == 0 && delayedCount == 0) {
+      title = '$staleCount rider${staleCount == 1 ? '' : 's'} not updating';
     } else if (staleCount == 0) {
-      title = '$liveCount rider${liveCount == 1 ? '' : 's'} live';
-    } else if (liveCount == 0) {
-      title = '$staleCount rider${staleCount == 1 ? '' : 's'} offline';
+      title = '$liveCount sharing · $delayedCount delayed';
     } else {
-      title = '$liveCount live · $staleCount no signal';
+      title = '$liveCount sharing · $staleCount not updating';
     }
 
-    return Material(
-      elevation: 4,
-      shadowColor: Colors.black26,
-      borderRadius: BorderRadius.circular(16),
-      color: cs.surface.withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
+    return GlassPanel(
+      radius: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
           children: [
             Container(
               width: 10,
@@ -59,8 +59,8 @@ class _StatusCard extends StatelessWidget {
                 color: liveCount > 0
                     ? cs.error
                     : staleCount > 0
-                        ? cs.outline
-                        : cs.onSurfaceVariant,
+                    ? cs.outline
+                    : cs.onSurfaceVariant,
               ),
             ),
             const SizedBox(width: 10),
@@ -71,20 +71,23 @@ class _StatusCard extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: theme.textTheme.labelLarge
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   if (tf != null)
                     Text(
-                      'Polled $tf',
-                      style: theme.textTheme.labelSmall
-                          ?.copyWith(color: cs.onSurfaceVariant),
+                      'Map checked $tf',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
                     ),
                   if (!hasAdminGps)
                     Text(
                       'Waiting for your GPS…',
-                      style: theme.textTheme.labelSmall
-                          ?.copyWith(color: cs.onSurfaceVariant),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
                     ),
                 ],
               ),
@@ -114,7 +117,6 @@ class _StatusCard extends StatelessWidget {
             ],
           ],
         ),
-      ),
     );
   }
 }
@@ -130,25 +132,22 @@ class _Legend extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    return Material(
-      elevation: 3,
-      shadowColor: Colors.black26,
-      borderRadius: BorderRadius.circular(12),
-      color: cs.surface.withValues(alpha: 0.94),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
+    return GlassPanel(
+      radius: 12,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             _LegendRow(color: const Color(0xFF1A73E8), label: 'You (admin)'),
             const SizedBox(height: 4),
-            _LegendRow(color: errorColor, label: 'Rider live'),
+            _LegendRow(color: errorColor, label: 'Sharing location'),
             const SizedBox(height: 4),
-            _LegendRow(color: cs.outline, label: 'No signal (idle)'),
+            _LegendRow(color: const Color(0xFFF59E0B), label: 'Update delayed'),
+            const SizedBox(height: 4),
+            _LegendRow(color: cs.outline, label: 'Last known point'),
           ],
         ),
-      ),
     );
   }
 }
@@ -175,9 +174,9 @@ class _LegendRow extends StatelessWidget {
         const SizedBox(width: 7),
         Text(
           label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
         ),
       ],
     );
@@ -209,14 +208,16 @@ class _DetailRow extends StatelessWidget {
           const SizedBox(width: 10),
           Text(
             '$label: ',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: cs.onSurfaceVariant),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: cs.onSurfaceVariant,
+            ),
           ),
           Expanded(
             child: Text(
               value,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -235,12 +236,14 @@ class _RidersListSheet extends StatefulWidget {
     required this.onRefresh,
     required this.onLocate,
     required this.onDetails,
+    this.onClose,
   });
 
   final List<_MarkerRow> riders;
   final bool loading;
   final ScrollController scrollController;
   final VoidCallback onRefresh;
+  final VoidCallback? onClose;
   final ValueChanged<_MarkerRow> onLocate;
   final ValueChanged<_MarkerRow> onDetails;
 
@@ -277,20 +280,22 @@ class _RidersListSheetState extends State<_RidersListSheet> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+          padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
           child: Row(
             children: [
               Icon(Icons.people_alt_rounded, color: cs.primary),
               const SizedBox(width: 10),
               Text(
                 'Active riders',
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w800),
+                style:
+                    (widget.onClose != null
+                            ? theme.textTheme.titleMedium
+                            : theme.textTheme.titleLarge)
+                        ?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: cs.primaryContainer,
                   borderRadius: BorderRadius.circular(999),
@@ -315,6 +320,12 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                       )
                     : const Icon(Icons.refresh_rounded),
               ),
+              if (widget.onClose != null)
+                IconButton(
+                  tooltip: 'Hide panel',
+                  onPressed: widget.onClose,
+                  icon: const Icon(Icons.close_rounded),
+                ),
             ],
           ),
         ),
@@ -343,8 +354,10 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                 borderRadius: BorderRadius.circular(14),
                 borderSide: BorderSide.none,
               ),
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: 0, horizontal: 14),
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: 0,
+                horizontal: 14,
+              ),
             ),
           ),
         ),
@@ -363,8 +376,7 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                   itemBuilder: (context, index) {
                     final r = filtered[index];
                     return Material(
-                      color:
-                          cs.surfaceContainerHighest.withValues(alpha: 0.4),
+                      color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(14),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
@@ -377,18 +389,30 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                 width: 44,
                                 height: 44,
                                 decoration: BoxDecoration(
-                                  color: r.isStale
-                                      ? cs.surfaceContainerHighest
-                                      : cs.errorContainer,
+                                  color: switch (r.signal) {
+                                    _RiderSignal.live => cs.errorContainer,
+                                    _RiderSignal.delayed => const Color(
+                                      0x14F59E0B,
+                                    ),
+                                    _ => cs.surfaceContainerHighest,
+                                  },
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
-                                  r.isStale
-                                      ? Icons.signal_wifi_off_rounded
-                                      : Icons.directions_bike_rounded,
-                                  color: r.isStale
-                                      ? cs.onSurfaceVariant
-                                      : cs.onErrorContainer,
+                                  switch (r.signal) {
+                                    _RiderSignal.live =>
+                                      Icons.directions_bike_rounded,
+                                    _RiderSignal.delayed =>
+                                      Icons.schedule_rounded,
+                                    _ => Icons.location_off_outlined,
+                                  },
+                                  color: switch (r.signal) {
+                                    _RiderSignal.live => cs.onErrorContainer,
+                                    _RiderSignal.delayed => const Color(
+                                      0xFFB45309,
+                                    ),
+                                    _ => cs.onSurfaceVariant,
+                                  },
                                   size: 22,
                                 ),
                               ),
@@ -401,8 +425,8 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                       r.username,
                                       style: theme.textTheme.titleSmall
                                           ?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
+                                            fontWeight: FontWeight.w800,
+                                          ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     const SizedBox(height: 2),
@@ -410,8 +434,8 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                       '${r.bikeLabel} · ${r.bikeCode}',
                                       style: theme.textTheme.bodySmall
                                           ?.copyWith(
-                                        color: cs.onSurfaceVariant,
-                                      ),
+                                            color: cs.onSurfaceVariant,
+                                          ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     const SizedBox(height: 4),
@@ -419,11 +443,16 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                       r.freshnessLabel,
                                       style: theme.textTheme.labelSmall
                                           ?.copyWith(
-                                        color: r.isStale
-                                            ? cs.error
-                                            : const Color(0xFF34C759),
-                                        fontWeight: FontWeight.w700,
-                                      ),
+                                            color: switch (r.signal) {
+                                              _RiderSignal.live => const Color(
+                                                0xFF34C759,
+                                              ),
+                                              _RiderSignal.delayed =>
+                                                const Color(0xFFB45309),
+                                              _ => cs.error,
+                                            },
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                     ),
                                   ],
                                 ),
@@ -434,9 +463,7 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                   IconButton(
                                     tooltip: 'Locate',
                                     onPressed: () => widget.onLocate(r),
-                                    icon: const Icon(
-                                      Icons.my_location_rounded,
-                                    ),
+                                    icon: const Icon(Icons.my_location_rounded),
                                     color: cs.primary,
                                     visualDensity: VisualDensity.compact,
                                   ),
@@ -499,8 +526,9 @@ class _RidersListEmpty extends StatelessWidget {
                 isSearching
                     ? 'No matching riders'
                     : (hasRiders ? 'No riders' : 'No active riders'),
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w700),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 4),
               Padding(

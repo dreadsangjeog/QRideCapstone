@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../utils/auth_validators.dart';
 import '../utils/error_message.dart';
+import '../widgets/login_scene_backdrop.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -91,118 +92,174 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Forgot password')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      _codeSent
-                          ? 'Enter the 6-digit code from your Gmail and choose a new password.'
-                          : 'Enter your username. We will email the Gmail you used when you registered.',
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _username,
-                      enabled: !_codeSent,
-                      textInputAction: TextInputAction.done,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
-                      validator: AuthValidators.username,
-                      onFieldSubmitted: (_) {
-                        if (_codeSent || _busy) return;
-                        _sendCode();
-                      },
-                    ),
-                    if (_codeSent) ...[
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _otp,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(6),
+    return AuthLightTheme(
+      child: Builder(
+        builder: (context) {
+          final theme = Theme.of(context);
+          final cs = theme.colorScheme;
+          return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
+      appBar: authSceneAppBar(),
+      body: LoginSceneBackdrop(
+        showRider: false,
+        child: AuthSceneBody(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: GlassLoginCard(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: cs.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Icon(
+                                    Icons.lock_reset_rounded,
+                                    color: cs.primary,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Forgot password',
+                                      style: theme.textTheme.titleLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w900,
+                                            letterSpacing: -0.3,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _codeSent
+                                          ? 'Enter the 6-digit code from your Gmail and choose a new password.'
+                                          : 'Enter your username. We will email the Gmail you used when you registered.',
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: cs.onSurfaceVariant,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _username,
+                            enabled: !_codeSent,
+                            textInputAction: TextInputAction.done,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                            validator: AuthValidators.username,
+                            onFieldSubmitted: (_) {
+                              if (_codeSent || _busy) return;
+                              _sendCode();
+                            },
+                          ),
+                          if (_codeSent) ...[
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _otp,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(6),
+                              ],
+                              decoration: const InputDecoration(
+                                labelText: 'Verification code',
+                                prefixIcon: Icon(Icons.pin_outlined),
+                              ),
+                              validator: AuthValidators.otp6,
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _newPassword,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                labelText: 'New password',
+                                prefixIcon: Icon(Icons.lock_outline),
+                              ),
+                              validator: AuthValidators.passwordMin6,
+                            ),
+                          ],
+                          if (_error != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              _error!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          if (!_codeSent)
+                            FilledButton(
+                              onPressed: _busy ? null : _sendCode,
+                              child: _busy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text('Send 6-digit code'),
+                            )
+                          else ...[
+                            FilledButton(
+                              onPressed: _busy ? null : _reset,
+                              child: _busy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text('Reset password'),
+                            ),
+                            const SizedBox(height: 8),
+                            TextButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _codeSent = false;
+                                        _otp.clear();
+                                        _newPassword.clear();
+                                        _error = null;
+                                      });
+                                    },
+                              child: const Text('Start over'),
+                            ),
+                          ],
                         ],
-                        decoration: const InputDecoration(
-                          labelText: 'Verification code',
-                          prefixIcon: Icon(Icons.pin_outlined),
-                        ),
-                        validator: AuthValidators.otp6,
                       ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _newPassword,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'New password',
-                          prefixIcon: Icon(Icons.lock_outline),
-                        ),
-                        validator: AuthValidators.passwordMin6,
-                      ),
-                    ],
-                    if (_error != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    if (!_codeSent)
-                      FilledButton(
-                        onPressed: _busy ? null : _sendCode,
-                        child: _busy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Send 6-digit code'),
-                      )
-                    else ...[
-                      FilledButton(
-                        onPressed: _busy ? null : _reset,
-                        child: _busy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Reset password'),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () {
-                                setState(() {
-                                  _codeSent = false;
-                                  _otp.clear();
-                                  _newPassword.clear();
-                                  _error = null;
-                                });
-                              },
-                        child: const Text('Start over'),
-                      ),
-                    ],
-                  ],
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ],
+          );
+        },
       ),
     );
   }

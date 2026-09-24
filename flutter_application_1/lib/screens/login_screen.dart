@@ -6,6 +6,7 @@ import '../theme/brand.dart';
 import '../utils/auth_validators.dart';
 import '../utils/error_message.dart';
 import '../widgets/auth_branding.dart';
+import '../widgets/login_scene_backdrop.dart';
 import 'forgot_password_screen.dart';
 import 'legal/terms_screen.dart';
 import 'register_screen.dart';
@@ -77,30 +78,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    return Scaffold(
-      body: AuthGradientBackground(
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+    return AuthLightTheme(
+      child: Builder(
+        builder: (context) {
+          final theme = Theme.of(context);
+          final cs = theme.colorScheme;
+          return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: LoginSceneBackdrop(
+        child: AuthSceneBody(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 440),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const AuthBrandHeader(),
-                    Card(
-                      elevation: 0,
-                      color: cs.surface,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        side: BorderSide(
-                          color: cs.outlineVariant.withValues(alpha: 0.55),
-                        ),
-                      ),
+                    GlassLoginCard(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
                         child: Column(
@@ -257,7 +250,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-        ),
+          );
+        },
       ),
     );
   }

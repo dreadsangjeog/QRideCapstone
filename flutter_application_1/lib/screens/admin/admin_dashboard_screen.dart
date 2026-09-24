@@ -9,10 +9,13 @@ import '../../models/bike.dart';
 import '../../models/rental.dart';
 import '../../models/rental_location.dart';
 import '../../models/rental_with_bike.dart';
+import '../../widgets/login_scene_backdrop.dart';
 import '../../widgets/qride_brand.dart';
+import '../../widgets/qride_glass.dart';
 import 'admin_generate_qr_screen.dart';
 import 'admin_history_tab.dart';
 import 'admin_home_tab.dart';
+import 'admin_layout.dart';
 import 'admin_map_tab.dart';
 import 'admin_reports_tab.dart';
 import 'admin_requests_tab.dart';
@@ -144,32 +147,37 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final isDark = cs.brightness == Brightness.dark;
-    final bar = isDark ? QrideBrand.night : Colors.white;
     final onBar = isDark ? Colors.white : const Color(0xFF111827);
 
     if (!_adminGatePassed) {
-      return Scaffold(
-        backgroundColor: isDark ? QrideBrand.night : const Color(0xFFF3F6FB),
-        appBar: AppBar(
-          title: const Text(
-            'QRide Admin',
-            style: TextStyle(fontWeight: FontWeight.w800),
+      return AdminGlassScene(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: const Text(
+              'QRide Admin',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            automaticallyImplyLeading: false,
+            backgroundColor: Colors.transparent,
+            foregroundColor: onBar,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: Colors.transparent,
+            flexibleSpace: const GlassAppBarBackdrop(),
           ),
-          automaticallyImplyLeading: false,
-          backgroundColor: bar,
-          foregroundColor: onBar,
-          elevation: 0,
+          body: const Center(child: CircularProgressIndicator()),
         ),
-        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
-    return DefaultTabController(
+    return AdminGlassScene(
+      child: DefaultTabController(
       length: 8,
       initialIndex: 0,
       child: Builder(
         builder: (context) => Scaffold(
-        backgroundColor: isDark ? QrideBrand.night : const Color(0xFFF3F6FB),
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
           title: Row(
             children: [
@@ -198,12 +206,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ],
           ),
           automaticallyImplyLeading: false,
-          backgroundColor: bar,
+          backgroundColor: Colors.transparent,
           foregroundColor: onBar,
           elevation: 0,
           scrolledUnderElevation: 0,
           surfaceTintColor: Colors.transparent,
+          flexibleSpace: const GlassAppBarBackdrop(),
           actions: [
+            AdminThemeToggle(color: onBar),
             NotificationBellButton(controller: _inbox, color: onBar),
             IconButton(
               icon: const Icon(Icons.logout_rounded),
@@ -225,7 +235,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
             unselectedLabelStyle:
                 const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            dividerColor: cs.outlineVariant.withValues(alpha: 0.35),
+            dividerColor: Colors.transparent,
             tabs: [
               const Tab(text: '  Dashboard  '),
               const Tab(text: '  Bikes  '),
@@ -253,7 +263,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ],
           ),
         ),
-        body: TabBarView(
+        body: withGlassHeaderShadow(TabBarView(
           physics: kIsWeb ? const NeverScrollableScrollPhysics() : null,
           children: [
             AdminHomeTab(
@@ -273,7 +283,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             const AdminVerifyUsersTab(),
             AdminReportsTab(repo: AnalyticsRepository()),
           ],
-        ),
+        )),
+      ),
       ),
       ),
     );

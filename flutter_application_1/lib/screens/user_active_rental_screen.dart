@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/rental.dart';
 import '../services/auth_service.dart';
 import '../services/location_tracking_service.dart';
+import '../services/ride_location_controller.dart';
 import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
 import '../services/rental_repository.dart';
@@ -24,13 +25,12 @@ class UserActiveRentalScreen extends StatefulWidget {
   const UserActiveRentalScreen({super.key});
 
   @override
-  State<UserActiveRentalScreen> createState() =>
-      _UserActiveRentalScreenState();
+  State<UserActiveRentalScreen> createState() => _UserActiveRentalScreenState();
 }
 
 class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   final _repo = RentalRepository();
-  final _tracking = LocationTrackingService();
+  LocationTrackingService? _tracking;
 
   // Live map
   final _mapController = MapController();
@@ -45,10 +45,10 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   DateTime _now = DateTime.now();
 
   // Notification sentinels (timer warnings; approve/end via inbox Realtime)
-  bool _notifiedApproved   = false;
-  bool _notifiedFiveMin    = false;
-  bool _notifiedOvertime   = false;
-  bool _extending          = false;
+  bool _notifiedApproved = false;
+  bool _notifiedFiveMin = false;
+  bool _notifiedOvertime = false;
+  bool _extending = false;
 
   RealtimeChannel? _channel;
 
@@ -62,13 +62,26 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   void dispose() {
     _ticker?.cancel();
     _channel?.unsubscribe();
-    _tracking.dispose();
+    _tracking?.position.removeListener(_onPositionUpdate);
+    _tracking?.heading.removeListener(_onPositionUpdate);
     _mapController.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final next = RideLocationScope.maybeOf(context)?.tracking;
+    if (next == _tracking) return;
+    _tracking?.position.removeListener(_onPositionUpdate);
+    _tracking?.heading.removeListener(_onPositionUpdate);
+    _tracking = next;
+    _tracking?.position.addListener(_onPositionUpdate);
+    _tracking?.heading.addListener(_onPositionUpdate);
+  }
+
   void _onPositionUpdate() {
-    final pos = _tracking.position.value;
+    final pos = _tracking?.position.value;
     if (pos == null || !_mapReady || !_followUser) return;
     final target = LatLng(pos.latitude, pos.longitude);
     try {
@@ -95,7 +108,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
         _rental = rental;
         _loading = false;
       });
-      if (rental?.isActive == true) unawaited(_startTracking(rental!));
+      if (rental?.isActive == true) _startRideTimer();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -131,7 +144,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     // via NotificationInboxController. This screen only drives GPS / UI.
     if (updated.isActive && !_notifiedApproved) {
       _notifiedApproved = true;
-      unawaited(_startTracking(updated));
+      _startRideTimer();
     }
 
     if (updated.isActive &&
@@ -142,40 +155,17 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     }
 
     if (updated.isEnded || updated.isRejected) {
-      _stopTracking();
       _ticker?.cancel();
     }
   }
 
-  Future<void> _startTracking(Rental rental) async {
-    // Start the ticker immediately so the UI countdown works even if GPS is slow.
+  void _startRideTimer() {
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
       _checkTimerNotifications();
     });
-
-    try {
-      await _tracking.startTracking(
-        rentalId: rental.id,
-        minInterval: const Duration(seconds: 3),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Location sharing failed: $e'),
-          duration: const Duration(seconds: 5),
-        ),
-      );
-    }
-  }
-
-  void _stopTracking() {
-    _tracking.stopTracking();
-    _ticker?.cancel();
-    _ticker = null;
   }
 
   void _checkTimerNotifications() {
@@ -250,14 +240,14 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       await _repo.cancelPendingRental(rentalId: rental.id);
       if (!mounted) return;
       setState(() => _rental = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Request cancelled.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Request cancelled.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
@@ -292,9 +282,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _extending = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not extend: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not extend: $e')));
     }
   }
 
@@ -359,14 +349,17 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   const SizedBox(height: 16),
                   Text(
                     'No active rental',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w800),
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Text(
                     'Tap Scan on the map, then point your camera at the bike QR or type the code.',
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: cs.onSurfaceVariant, height: 1.4),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -388,7 +381,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     final df = DateFormat('h:mm a');
     final hours = rental.plannedMinutes >= 60
         ? '${rental.plannedMinutes ~/ 60}h '
-            '${rental.plannedMinutes % 60 > 0 ? "${rental.plannedMinutes % 60}m" : ""}'
+              '${rental.plannedMinutes % 60 > 0 ? "${rental.plannedMinutes % 60}m" : ""}'
         : '${rental.plannedMinutes}m';
 
     return UserPortalScaffold(
@@ -426,7 +419,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 3),
+                                horizontal: 10,
+                                vertical: 3,
+                              ),
                               decoration: BoxDecoration(
                                 color: cs.tertiaryContainer,
                                 borderRadius: BorderRadius.circular(999),
@@ -462,8 +457,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   _RentalInfoRow(
                     icon: Icons.attach_money_rounded,
                     label: 'Est. cost',
-                    value:
-                        '₱${(rental.estimatedCost ?? 0).toStringAsFixed(2)}',
+                    value: '₱${(rental.estimatedCost ?? 0).toStringAsFixed(2)}',
                   ),
                   _RentalInfoRow(
                     icon: Icons.schedule_rounded,
@@ -473,8 +467,10 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   const SizedBox(height: 18),
                   Text(
                     'The admin has been notified. Your ride will begin as soon as they approve.',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: cs.onSurfaceVariant, height: 1.4),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                 ],
               ),
@@ -502,6 +498,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   Widget _buildActive(Rental rental) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final tracking = RideLocationScope.of(context).tracking;
     final endTime = rental.scheduledEndTime;
     final isOvertime = endTime != null && _now.isAfter(endTime);
 
@@ -554,7 +551,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 3),
+                                horizontal: 10,
+                                vertical: 3,
+                              ),
                               decoration: BoxDecoration(
                                 color: isOvertime
                                     ? cs.errorContainer
@@ -591,7 +590,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   // Countdown / Overtime display
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        vertical: 18, horizontal: 16),
+                      vertical: 18,
+                      horizontal: 16,
+                    ),
                     decoration: BoxDecoration(
                       color: isOvertime
                           ? cs.errorContainer.withValues(alpha: 0.3)
@@ -643,8 +644,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color:
-                          cs.surfaceContainerHighest.withValues(alpha: 0.4),
+                      color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: cs.outlineVariant),
                     ),
@@ -653,8 +653,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                         _CostRow(label: 'Base cost', value: elapsedCost),
                         if (penalty > 0) ...[
                           _CostRow(
-                            label:
-                                'Penalty (${overtimeMin}m overtime × 1.5×)',
+                            label: 'Penalty (${overtimeMin}m overtime × 1.5×)',
                             value: penalty,
                             color: cs.error,
                           ),
@@ -677,8 +676,10 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   const SizedBox(height: 12),
                   Text(
                     'Admin will end your ride. Your live location and heading stay shared while you ride.',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: cs.onSurfaceVariant, height: 1.4),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 14),
                   OutlinedButton.icon(
@@ -693,9 +694,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.more_time_rounded),
-                    label: Text(
-                      _extending ? 'Extending…' : 'Extend time',
-                    ),
+                    label: Text(_extending ? 'Extending…' : 'Extend time'),
                   ),
                 ],
               ),
@@ -717,11 +716,12 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                       const SizedBox(width: 8),
                       Text(
                         'Live location',
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       const Spacer(),
-                      _GpsStatusBadge(tracking: _tracking),
+                      _GpsStatusBadge(tracking: tracking),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -731,7 +731,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                       height: 220,
                       child: _RiderLiveMap(
                         controller: _mapController,
-                        tracking: _tracking,
+                        tracking: tracking,
                         followUser: _followUser,
                         onFollowChanged: (v) {
                           if (_followUser == v) return;
@@ -746,7 +746,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  _GpsDetailRow(tracking: _tracking),
+                  _GpsDetailRow(tracking: tracking),
                 ],
               ),
             ),
@@ -827,8 +827,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                       const SizedBox(height: 12),
                       Text(
                         'Ended at ${df.format(rental.endedAt!.toLocal())}',
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: cs.onSurfaceVariant),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ],

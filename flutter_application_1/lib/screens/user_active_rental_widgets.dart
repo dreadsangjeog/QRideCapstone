@@ -275,8 +275,8 @@ class _GpsStatusBadge extends StatelessWidget {
                 ? cs.error
                 : (shared ? const Color(0xFF22C55E) : cs.onSurfaceVariant);
             final label = hasError
-                ? 'Error'
-                : (shared ? 'Sharing' : 'Connecting…');
+                ? 'Not reaching admin'
+                : (shared ? 'Sharing with admin' : 'Connecting…');
             return Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

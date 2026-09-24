@@ -10,12 +10,25 @@ class KycProfile {
     this.idImagePath,
     this.selfieImagePath,
     this.note,
+    this.firstName,
+    this.middleName,
+    this.lastName,
   });
 
   final String status;
   final String? idImagePath;
   final String? selfieImagePath;
   final String? note;
+  final String? firstName;
+  final String? middleName;
+  final String? lastName;
+
+  String get legalName {
+    final parts = [firstName, middleName, lastName]
+        .map((s) => (s ?? '').trim())
+        .where((s) => s.isNotEmpty);
+    return parts.join(' ');
+  }
 
   bool get isVerified => status == 'verified';
   bool get isPending => status == 'pending';
@@ -33,10 +46,23 @@ class KycPendingUser {
     this.selfieLeftPath,
     this.selfieRightPath,
     this.note,
+    this.firstName,
+    this.middleName,
+    this.lastName,
   });
 
   final String id;
   final String username;
+  final String? firstName;
+  final String? middleName;
+  final String? lastName;
+
+  String get legalName {
+    final parts = [firstName, middleName, lastName]
+        .map((s) => (s ?? '').trim())
+        .where((s) => s.isNotEmpty);
+    return parts.join(' ');
+  }
   final String status;
   final String? idImagePath;
   final String? selfieImagePath;
@@ -57,24 +83,71 @@ class KycRepository {
       final row = await SupabaseClientProvider.client
           .from('profiles')
           .select(
+            'verification_status, id_image_path, selfie_image_path, verification_note, first_name, middle_name, last_name',
+          )
+          .eq('id', uid)
+          .maybeSingle();
+      if (row == null) return KycProfile(status: 'unverified');
+      return _profileFromRow(row);
+    } catch (e) {
+      final s = e.toString();
+      if (s.contains('first_name') || s.contains('42703')) {
+        return _fetchMineWithoutName();
+      }
+      if (s.contains('verification_status')) {
+        return KycProfile(status: 'verified');
+      }
+      rethrow;
+    }
+  }
+
+  Future<KycProfile> _fetchMineWithoutName() async {
+    final uid = SupabaseClientProvider.client.auth.currentUser?.id;
+    if (uid == null) return KycProfile(status: 'unverified');
+    try {
+      final row = await SupabaseClientProvider.client
+          .from('profiles')
+          .select(
             'verification_status, id_image_path, selfie_image_path, verification_note',
           )
           .eq('id', uid)
           .maybeSingle();
       if (row == null) return KycProfile(status: 'unverified');
-      return KycProfile(
+      return _profileFromRow(row);
+    } catch (_) {
+      return KycProfile(status: 'verified');
+    }
+  }
+
+  KycProfile _profileFromRow(Map<String, dynamic> row) => KycProfile(
         status: (row['verification_status'] as String?) ?? 'unverified',
         idImagePath: row['id_image_path'] as String?,
         selfieImagePath: row['selfie_image_path'] as String?,
         note: row['verification_note'] as String?,
+        firstName: row['first_name'] as String?,
+        middleName: row['middle_name'] as String?,
+        lastName: row['last_name'] as String?,
       );
-    } catch (e) {
-      final s = e.toString();
-      if (s.contains('verification_status') || s.contains('42703')) {
-        return KycProfile(status: 'verified');
-      }
-      rethrow;
+
+  /// Saves the name used to match the uploaded ID. No-op once verified.
+  Future<void> updateLegalName({
+    required String firstName,
+    String? middleName,
+    required String lastName,
+  }) async {
+    final uid = SupabaseClientProvider.client.auth.currentUser?.id;
+    if (uid == null) throw StateError('Not signed in');
+    final current = await fetchMine();
+    if (current.isVerified) {
+      throw StateError('Your name is locked after ID verification.');
     }
+    await SupabaseClientProvider.client.from('profiles').update({
+      'first_name': firstName.trim(),
+      'middle_name': (middleName ?? '').trim().isEmpty
+          ? null
+          : middleName!.trim(),
+      'last_name': lastName.trim(),
+    }).eq('id', uid);
   }
 
   Future<void> submit({
@@ -147,7 +220,7 @@ class KycRepository {
 
     Future<List<dynamic>> run({required bool withSideSelfies}) async {
       final cols = withSideSelfies
-          ? 'id, username, role, verification_status, id_image_path, selfie_image_path, selfie_left_image_path, selfie_right_image_path, verification_note'
+          ? 'id, username, role, verification_status, id_image_path, selfie_image_path, selfie_left_image_path, selfie_right_image_path, verification_note, first_name, middle_name, last_name'
           : 'id, username, role, verification_status, id_image_path, selfie_image_path, verification_note';
       var filter =
           SupabaseClientProvider.client.from('profiles').select(cols);
@@ -189,6 +262,9 @@ class KycRepository {
           return KycPendingUser(
             id: id,
             username: (m['username'] as String?) ?? 'user',
+            firstName: m['first_name'] as String?,
+            middleName: m['middle_name'] as String?,
+            lastName: m['last_name'] as String?,
             status: (m['verification_status'] as String?) ?? 'unverified',
             idImagePath: m['id_image_path'] as String?,
             selfieImagePath: m['selfie_image_path'] as String?,

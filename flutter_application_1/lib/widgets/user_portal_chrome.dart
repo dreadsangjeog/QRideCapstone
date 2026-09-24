@@ -1,8 +1,11 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../screens/notifications_screen.dart';
-import '../theme/brand.dart';
+import 'login_scene_backdrop.dart';
 import 'qride_brand.dart';
+import 'qride_glass.dart';
 
 /// Soft gradient for user-area tabs — same family as splash / launcher.
 class UserPortalBackdrop extends StatelessWidget {
@@ -56,18 +59,34 @@ class GlassCircleButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark
-        ? const Color(0xE6182233)
-        : Colors.white.withValues(alpha: 0.96);
+        ? Colors.white.withValues(alpha: 0.10)
+        : Colors.white.withValues(alpha: 0.48);
     final fg = isDark ? const Color(0xFFE8EEF6) : foreground;
-    return Material(
-      color: bg,
-      shape: const CircleBorder(),
-      elevation: 6,
-      shadowColor: Colors.black.withValues(alpha: 0.22),
-      child: IconButton(
-        tooltip: tooltip,
-        onPressed: onTap,
-        icon: Icon(icon, color: fg),
+    final rim = Colors.white.withValues(alpha: isDark ? 0.18 : 0.78);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.10),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Material(
+            color: bg,
+            shape: CircleBorder(side: BorderSide(color: rim)),
+            child: IconButton(
+              tooltip: tooltip,
+              onPressed: onTap,
+              icon: Icon(icon, color: fg),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -90,48 +109,43 @@ class UserPortalScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = cs.brightness == Brightness.dark;
-    final base = isDark ? QrideBrand.night : QrideBrand.mist;
     final home = RiderNavScope.maybeOf(context)?.goHome;
-    return Scaffold(
-      backgroundColor: base,
-      appBar: AppBar(
-        title: Text(
-          title,
-          style: const TextStyle(
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.4,
+    return AdminGlassScene(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.4,
+            ),
           ),
+          backgroundColor: Colors.transparent,
+          foregroundColor: Theme.of(context).colorScheme.onSurface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          flexibleSpace: const GlassAppBarBackdrop(),
+          leading: (home == null && !Navigator.of(context).canPop())
+              ? null
+              : IconButton(
+                  tooltip: 'Back',
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+                  onPressed: () {
+                    if (Navigator.of(context).canPop()) {
+                      Navigator.of(context).pop();
+                      return;
+                    }
+                    home?.call();
+                  },
+                ),
+          actions: [
+            ...?actions,
+            if (showBell) const NotificationBellButton(),
+          ],
         ),
-        backgroundColor: base.withValues(alpha: 0.88),
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: (home == null && !Navigator.of(context).canPop())
-            ? null
-            : IconButton(
-                tooltip: 'Back',
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-                onPressed: () {
-                  if (Navigator.of(context).canPop()) {
-                    Navigator.of(context).pop();
-                    return;
-                  }
-                  home?.call();
-                },
-              ),
-        actions: [
-          ...?actions,
-          if (showBell) const NotificationBellButton(),
-        ],
-      ),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned.fill(child: UserPortalBackdrop(colorScheme: cs)),
-          body,
-        ],
+        body: withGlassHeaderShadow(body),
       ),
     );
   }
@@ -145,31 +159,10 @@ class PolishedSectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Material(
-      color: cs.surface.withValues(alpha: 0.92),
-      elevation: 0,
-      shadowColor: Colors.transparent,
-      borderRadius: BorderRadius.circular(24),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: cs.outlineVariant.withValues(alpha: 0.28),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 24,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: child,
-        ),
-      ),
+    return GlassPanel(
+      radius: 24,
+      padding: EdgeInsets.zero,
+      child: child,
     );
   }
 }

@@ -6,6 +6,7 @@ import '../../models/bike.dart';
 import '../../services/admin_repository.dart';
 import '../../services/auth_service.dart';
 import '../../utils/bike_qr_payload.dart';
+import 'admin_layout.dart';
 
 class AdminGenerateQrScreen extends StatefulWidget {
   const AdminGenerateQrScreen({
@@ -223,7 +224,12 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
       child: Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: adminInDialog(context) ? 'Close' : 'Back',
+          icon: Icon(
+            adminInDialog(context)
+                ? Icons.close_rounded
+                : Icons.arrow_back_rounded,
+          ),
           onPressed: () => Navigator.of(context).pop(_refreshListOnPop),
         ),
         title: Text(_isExisting ? 'Bike QR' : 'New bike & QR'),

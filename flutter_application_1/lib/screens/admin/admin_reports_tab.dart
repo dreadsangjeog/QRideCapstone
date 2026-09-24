@@ -4,8 +4,18 @@ import 'package:intl/intl.dart';
 import '../../services/analytics_repository.dart';
 import '../../theme/brand.dart';
 import '../../utils/rental_billing.dart';
-import '../../utils/save_text_file.dart';
+import '../../utils/save_bytes_file.dart';
+import '../../widgets/qride_glass.dart';
 import 'admin_report_charts.dart';
+
+final _peso = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
+final _pesoExact = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+
+const _green = Color(0xFF22C55E);
+const _violet = Color(0xFF7C3AED);
+const _cyan = Color(0xFF0891B2);
+const _pink = Color(0xFFDB2777);
+const _orange = Color(0xFFEA580C);
 
 class AdminReportsTab extends StatefulWidget {
   const AdminReportsTab({super.key, required this.repo});
@@ -28,25 +38,25 @@ class _AdminReportsTabState extends State<AdminReportsTab> {
     await _future;
   }
 
-  Future<void> _exportCsv(ReportSnapshot snapshot) async {
+  Future<void> _exportExcel(ReportSnapshot snapshot) async {
     setState(() => _exporting = true);
     try {
-      final csv = widget.repo.buildReportCsv(snapshot);
+      final bytes = widget.repo.buildReportXlsx(snapshot);
       final stamp = DateFormat('yyyyMMdd').format(DateTime.now());
-      final filename = 'qride-report-${_days}d-$stamp.csv';
-      await saveTextFile(
+      final filename = 'qride-report-${_days}d-$stamp.xlsx';
+      await saveBytesFile(
         filename: filename,
-        contents: csv,
-        mime: 'text/csv',
+        bytes: bytes,
+        mime:
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         subject: 'QRide report last $_days days',
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Exported ${snapshot.rows.length} rentals · '
-            '${snapshot.completedCount} completed · '
-            '${snapshot.requestCount} requests',
+            'Exported ${snapshot.completedCount} completed rides · '
+            '${_pesoExact.format(snapshot.collected)} collected',
           ),
         ),
       );
@@ -64,11 +74,7 @@ class _AdminReportsTabState extends State<AdminReportsTab> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    return ColoredBox(
-      color: cs.brightness == Brightness.dark
-          ? QrideBrand.night
-          : const Color(0xFFF3F6FB),
-      child: RefreshIndicator(
+    return RefreshIndicator(
         onRefresh: _refresh,
         color: QrideBrand.accent,
         child: FutureBuilder<ReportSnapshot>(
@@ -123,11 +129,10 @@ class _AdminReportsTabState extends State<AdminReportsTab> {
                   _future = _load();
                 });
               },
-              onExport: () => _exportCsv(snapshot.data!),
+              onExport: () => _exportExcel(snapshot.data!),
             );
           },
         ),
-      ),
     );
   }
 }
@@ -151,18 +156,18 @@ class _ReportsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final wide = MediaQuery.sizeOf(context).width >= 980;
-    final mid = MediaQuery.sizeOf(context).width >= 760;
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 980;
+    final mid = width >= 760;
     final range = DateFormat('MMM d');
     final avg = stats.averageDuration;
-    final money = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
 
     final kpis = [
       _SoftKpi(
         label: 'Completed',
         value: '${stats.completedCount}',
-        sub: 'Ended rides in range',
-        color: const Color(0xFF7C3AED),
+        sub: '${stats.avgPerDay.toStringAsFixed(1)} rides per day',
+        color: _violet,
         wash: const Color(0xFFEEE7FF),
       ),
       _SoftKpi(
@@ -170,24 +175,26 @@ class _ReportsBody extends StatelessWidget {
         value: avg == null
             ? '—'
             : formatRideDurationMinutes(avg.inSeconds / 60.0),
-        sub: stats.ridesWithDuration == 0
-            ? 'No timed rides yet'
-            : 'From approval to return',
-        color: const Color(0xFF0891B2),
+        sub: 'From approval to return',
+        color: _cyan,
         wash: const Color(0xFFD9F4FB),
       ),
       _SoftKpi(
-        label: 'Requests',
-        value: '${stats.requestCount}',
-        sub: 'Submitted in this window',
+        label: 'Total ride time',
+        value: stats.totalRideMinutes <= 0
+            ? '—'
+            : formatRideDurationMinutes(stats.totalRideMinutes),
+        sub: 'Across ${stats.ridesWithDuration} timed rides',
         color: QrideBrand.accent,
         wash: const Color(0xFFDCEBFF),
       ),
       _SoftKpi(
         label: 'Collected',
-        value: money.format(stats.collected),
-        sub: 'Actual + penalty on ended rides',
-        color: const Color(0xFFDB2777),
+        value: _peso.format(stats.collected),
+        sub: stats.penalties > 0
+            ? 'Incl. ${_peso.format(stats.penalties)} penalties'
+            : 'No penalties charged',
+        color: _pink,
         wash: const Color(0xFFFFE4F0),
       ),
     ];
@@ -211,7 +218,7 @@ class _ReportsBody extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${range.format(stats.rangeStart)} – ${range.format(stats.rangeEndInclusive)}  ·  local time',
+                    '${range.format(stats.rangeStart)} – ${range.format(stats.rangeEndInclusive)}  ·  completed rides, local time',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: cs.onSurfaceVariant,
                     ),
@@ -231,7 +238,7 @@ class _ReportsBody extends StatelessWidget {
                       ),
                     )
                   : const Icon(Icons.download_rounded, size: 18),
-              label: Text(exporting ? 'Preparing…' : 'Export CSV'),
+              label: Text(exporting ? 'Preparing…' : 'Export Excel'),
             ),
           ],
         ),
@@ -279,22 +286,22 @@ class _ReportsBody extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(flex: 7, child: _RequestsCompletedCard(stats: stats)),
+              Expanded(flex: 7, child: _CompletedTrendCard(stats: stats)),
               const SizedBox(width: 14),
-              Expanded(flex: 4, child: _OpenNowCard(stats: stats)),
+              Expanded(flex: 4, child: _RevenueCard(stats: stats)),
             ],
           )
         else ...[
-          _RequestsCompletedCard(stats: stats),
+          _CompletedTrendCard(stats: stats),
           const SizedBox(height: 14),
-          _OpenNowCard(stats: stats),
+          _RevenueCard(stats: stats),
         ],
         const SizedBox(height: 14),
         if (mid)
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _StatusDonutCard(stats: stats)),
+              Expanded(child: _TopBikesCard(stats: stats)),
               const SizedBox(width: 14),
               Expanded(child: _DurationDonutCard(stats: stats)),
               const SizedBox(width: 14),
@@ -302,7 +309,7 @@ class _ReportsBody extends StatelessWidget {
             ],
           )
         else ...[
-          _StatusDonutCard(stats: stats),
+          _TopBikesCard(stats: stats),
           const SizedBox(height: 14),
           _DurationDonutCard(stats: stats),
           const SizedBox(height: 14),
@@ -312,6 +319,21 @@ class _ReportsBody extends StatelessWidget {
     );
   }
 }
+
+List<({String label, String value, Color color})> _dayDetails(
+  ReportDayPoint d,
+) =>
+    [
+      (label: 'Rides', value: '${d.completed}', color: _green),
+      (label: 'Collected', value: _pesoExact.format(d.collected), color: _pink),
+      (
+        label: 'Ride time',
+        value: d.rideMinutes <= 0 ? '—' : formatRideDurationMinutes(d.rideMinutes),
+        color: QrideBrand.accent,
+      ),
+    ];
+
+String _dayTitle(ReportDayPoint d) => DateFormat('EEEE, MMM d').format(d.day);
 
 class _SoftKpi extends StatelessWidget {
   const _SoftKpi({
@@ -331,12 +353,9 @@ class _SoftKpi extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
+    return GlassPanel(
+      tint: dark ? color.withValues(alpha: 0.18) : wash.withValues(alpha: 0.55),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-      decoration: BoxDecoration(
-        color: dark ? color.withValues(alpha: 0.16) : wash,
-        borderRadius: BorderRadius.circular(22),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -349,19 +368,25 @@ class _SoftKpi extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Text(
-            value,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w900,
-              fontSize: 30,
-              height: 1,
-              letterSpacing: -1,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w900,
+                fontSize: 30,
+                height: 1,
+                letterSpacing: -1,
+              ),
             ),
           ),
           const SizedBox(height: 8),
           Text(
             sub,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 12,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -374,46 +399,50 @@ class _SoftKpi extends StatelessWidget {
 }
 
 class _ChartCard extends StatelessWidget {
-  const _ChartCard({required this.title, required this.child, this.legend});
+  const _ChartCard({
+    required this.title,
+    required this.child,
+    this.subtitle,
+  });
 
   final String title;
+  final String? subtitle;
   final Widget child;
-  final Widget? legend;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
+    return GlassPanel(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.22)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    if (subtitle != null)
+                      Text(
+                        subtitle!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant,
+                            ),
                       ),
+                  ],
                 ),
               ),
-              ?legend,
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           child,
         ],
       ),
@@ -421,35 +450,8 @@ class _ChartCard extends StatelessWidget {
   }
 }
 
-class _LegendDot extends StatelessWidget {
-  const _LegendDot({required this.color, required this.label});
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-        ),
-      ],
-    );
-  }
-}
-
-class _RequestsCompletedCard extends StatelessWidget {
-  const _RequestsCompletedCard({required this.stats});
+class _CompletedTrendCard extends StatelessWidget {
+  const _CompletedTrendCard({required this.stats});
   final ReportSnapshot stats;
 
   @override
@@ -461,70 +463,68 @@ class _RequestsCompletedCard extends StatelessWidget {
             : DateFormat('EEE d').format(d.day),
     ];
     return _ChartCard(
-      title: 'Requests vs completed',
-      legend: const Row(
-        children: [
-          _LegendDot(color: QrideBrand.accent, label: 'Requests'),
-          SizedBox(width: 12),
-          _LegendDot(color: Color(0xFF22C55E), label: 'Completed'),
-        ],
-      ),
+      title: 'Completed rides',
+      subtitle: 'Hover or tap the line for daily details',
       child: ReportLineChart(
+        height: 230,
         labels: labels,
         series: [
           ReportLineSeries(
-            label: 'Requests',
-            color: QrideBrand.accent,
-            values: [for (final d in stats.daily) d.requests.toDouble()],
-          ),
-          ReportLineSeries(
-            label: 'Completed',
-            color: const Color(0xFF22C55E),
+            label: 'Rides',
+            color: _green,
             values: [for (final d in stats.daily) d.completed.toDouble()],
           ),
         ],
+        tooltipTitle: (i) => _dayTitle(stats.daily[i]),
+        tooltipLines: (i) => _dayDetails(stats.daily[i]),
       ),
     );
   }
 }
 
-class _OpenNowCard extends StatelessWidget {
-  const _OpenNowCard({required this.stats});
+class _RevenueCard extends StatelessWidget {
+  const _RevenueCard({required this.stats});
   final ReportSnapshot stats;
 
   @override
   Widget build(BuildContext context) {
     return _ChartCard(
-      title: 'Open now',
+      title: 'Revenue',
+      subtitle: '${_pesoExact.format(stats.collected)} in this window',
       child: Column(
         children: [
           ReportLineChart(
-            height: 120,
+            height: 150,
             labels: [
               for (final d in stats.daily) DateFormat('d').format(d.day),
             ],
+            yLabel: (v) => v >= 1000
+                ? '₱${(v / 1000).toStringAsFixed(1)}k'
+                : '₱${v.round()}',
             series: [
               ReportLineSeries(
-                label: 'Completed',
-                color: const Color(0xFF7C3AED),
-                values: [for (final d in stats.daily) d.completed.toDouble()],
+                label: 'Collected',
+                color: _pink,
+                values: [for (final d in stats.daily) d.collected],
               ),
             ],
+            tooltipTitle: (i) => _dayTitle(stats.daily[i]),
+            tooltipLines: (i) => _dayDetails(stats.daily[i]),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: _MiniStat(
-                  label: 'Pending',
+                  label: 'Pending now',
                   value: '${stats.openPending}',
-                  color: const Color(0xFFEA580C),
+                  color: _orange,
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: _MiniStat(
-                  label: 'Active',
+                  label: 'Riding now',
                   value: '${stats.openActive}',
                   color: QrideBrand.accent,
                 ),
@@ -581,36 +581,108 @@ class _MiniStat extends StatelessWidget {
   }
 }
 
-class _StatusDonutCard extends StatelessWidget {
-  const _StatusDonutCard({required this.stats});
+class _TopBikesCard extends StatelessWidget {
+  const _TopBikesCard({required this.stats});
   final ReportSnapshot stats;
 
   @override
   Widget build(BuildContext context) {
-    final total = stats.statusMix.values.fold<int>(0, (a, b) => a + b);
+    final cs = Theme.of(context).colorScheme;
+    final top = stats.topBikes.take(5).toList();
+    final maxRides = top.isEmpty ? 1 : top.first.rides;
+    const palette = [QrideBrand.accent, _violet, _cyan, _pink, _orange];
+
     return _ChartCard(
-      title: 'Requests by status',
-      child: ReportDonutChart(
-        centerValue: '$total',
-        centerLabel: 'in range',
-        slices: [
-          (
-            label: 'Ended',
-            value: stats.statusMix['ended'] ?? 0,
-            color: const Color(0xFF22C55E),
-          ),
-          (
-            label: 'Active',
-            value: stats.statusMix['active'] ?? 0,
-            color: QrideBrand.accent,
-          ),
-          (
-            label: 'Pending',
-            value: stats.statusMix['pending'] ?? 0,
-            color: const Color(0xFFEA580C),
-          ),
-        ],
-      ),
+      title: 'Top bikes',
+      subtitle: 'Most completed rides',
+      child: top.isEmpty
+          ? SizedBox(
+              height: 148,
+              child: Center(
+                child: Text(
+                  'No completed rides yet.',
+                  style: TextStyle(
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                for (var i = 0; i < top.length; i++)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: i == top.length - 1 ? 0 : 12),
+                    child: Tooltip(
+                      message: '${top[i].rides} rides · '
+                          '${_pesoExact.format(top[i].collected)} · '
+                          '${formatRideDurationMinutes(top[i].rideMinutes)} ridden',
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 26,
+                            height: 26,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: palette[i].withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '${i + 1}',
+                              style: TextStyle(
+                                color: palette[i],
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        top[i].name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      '${top[i].rides}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        color: palette[i],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 5),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(99),
+                                  child: LinearProgressIndicator(
+                                    minHeight: 6,
+                                    value: top[i].rides / maxRides,
+                                    color: palette[i],
+                                    backgroundColor:
+                                        palette[i].withValues(alpha: 0.10),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
     );
   }
 }
@@ -621,32 +693,22 @@ class _DurationDonutCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const colors = [Color(0xFF38BDF8), QrideBrand.accent, _violet, _pink];
     return _ChartCard(
       title: 'Ride length',
+      subtitle: 'How long riders keep bikes',
       child: ReportDonutChart(
         centerValue: '${stats.ridesWithDuration}',
         centerLabel: 'timed',
         slices: [
-          (
-            label: 'Under 15m',
-            value: stats.durationBuckets['Under 15m'] ?? 0,
-            color: const Color(0xFF38BDF8),
-          ),
-          (
-            label: '15–30m',
-            value: stats.durationBuckets['15–30m'] ?? 0,
-            color: QrideBrand.accent,
-          ),
-          (
-            label: '30–60m',
-            value: stats.durationBuckets['30–60m'] ?? 0,
-            color: const Color(0xFF7C3AED),
-          ),
-          (
-            label: 'Over 1h',
-            value: stats.durationBuckets['Over 1h'] ?? 0,
-            color: const Color(0xFFDB2777),
-          ),
+          for (var i = 0; i < AnalyticsRepository.durationBucketLabels.length; i++)
+            (
+              label: AnalyticsRepository.durationBucketLabels[i],
+              value: stats.durationBuckets[
+                      AnalyticsRepository.durationBucketLabels[i]] ??
+                  0,
+              color: colors[i],
+            ),
         ],
       ),
     );
@@ -661,7 +723,9 @@ class _WeekdayCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return _ChartCard(
       title: 'Completed by weekday',
+      subtitle: 'Busiest days of the week',
       child: ReportBarChart(
+        height: 160,
         labels: const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
         values: [for (final n in stats.byWeekday) n.toDouble()],
         color: QrideBrand.accent,

@@ -21,10 +21,15 @@ Deno.serve(async (req) => {
     const email = String(body.email ?? "").trim().toLowerCase();
     const username = String(body.username ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
+    const firstName = cleanName(body.first_name);
+    const middleName = cleanName(body.middle_name);
+    const lastName = cleanName(body.last_name);
 
     if (!email || !username || !password) {
       return json({ error: "Email, username, and password are required." }, 400);
     }
+    const nameErr = validateLegalName(firstName, middleName, lastName);
+    if (nameErr) return json({ error: nameErr }, 400);
     if (password.length < 6) {
       return json({ error: "Password must be at least 6 characters." }, 400);
     }
@@ -79,6 +84,9 @@ Deno.serve(async (req) => {
       {
         email,
         username,
+        first_name: firstName,
+        middle_name: middleName || null,
+        last_name: lastName,
         password_hash: passwordHash,
         otp_hash: otpHash,
         expires_at: expiresAt,
@@ -114,6 +122,31 @@ Deno.serve(async (req) => {
     return json({ error: String(e) }, 500);
   }
 });
+
+function cleanName(v: unknown): string {
+  return String(v ?? "").trim().replace(/\s+/g, " ");
+}
+
+function validateLegalName(first: string, middle: string, last: string): string | null {
+  const re = /^[A-Za-z][A-Za-z .'\-]*$/;
+  if (!first) return "First name is required.";
+  if (!last) return "Last name is required.";
+  for (const [label, value, required] of [
+    ["First name", first, true],
+    ["Middle name", middle, false],
+    ["Last name", last, true],
+  ] as const) {
+    if (!value) {
+      if (required) return `${label} is required.`;
+      continue;
+    }
+    if (value.length > 40) return `${label} must be at most 40 characters.`;
+    if (!re.test(value)) {
+      return `${label} may only use letters, spaces, hyphens, and apostrophes.`;
+    }
+  }
+  return null;
+}
 
 async function hashOtp(otp: string): Promise<string> {
   const pepper = Deno.env.get("SIGNUP_OTP_PEPPER") ??

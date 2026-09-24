@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/ride_location_controller.dart';
 import '../theme/brand.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'legal/terms_screen.dart';
@@ -25,17 +29,20 @@ class _UserRootShellState extends State<UserRootShell> {
   /// 0 map, 1 active (kept alive for GPS), 2 history, 3 profile
   int _index = 0;
   final _inbox = NotificationInboxController();
+  final _rideLocation = RideLocationController();
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
     super.initState();
     _inbox.start();
+    unawaited(_rideLocation.start());
   }
 
   @override
   void dispose() {
     _inbox.dispose();
+    unawaited(_rideLocation.dispose());
     super.dispose();
   }
 
@@ -50,10 +57,8 @@ class _UserRootShellState extends State<UserRootShell> {
       PageRouteBuilder<void>(
         pageBuilder: (context, animation, secondaryAnimation) =>
             const UserScanScreen(),
-        transitionsBuilder: (_, anim, _, child) => FadeTransition(
-          opacity: anim,
-          child: child,
-        ),
+        transitionsBuilder: (_, anim, _, child) =>
+            FadeTransition(opacity: anim, child: child),
         transitionDuration: const Duration(milliseconds: 220),
       ),
     );
@@ -62,9 +67,9 @@ class _UserRootShellState extends State<UserRootShell> {
   Future<void> _onDrawerPick(int value) async {
     Navigator.of(context).pop();
     if (value == 4) {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const TermsScreen()),
-      );
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const TermsScreen()));
       return;
     }
     if (value == 5) {
@@ -82,54 +87,54 @@ class _UserRootShellState extends State<UserRootShell> {
   Widget build(BuildContext context) {
     return NotificationInboxScope(
       controller: _inbox,
-      child: RiderNavScope(
-        goHome: _goHome,
-        openPage: _openPage,
-        child: Scaffold(
-          key: _scaffoldKey,
-          drawer: _RiderDrawer(
-            currentIndex: _index,
-            onPick: _onDrawerPick,
-          ),
-          drawerEnableOpenDragGesture: _index == 0,
-          body: Stack(
-            fit: StackFit.expand,
-            children: [
-              IndexedStack(
-                index: _index,
-                children: const [
-                  UserHomeMapScreen(),
-                  UserActiveRentalScreen(),
-                  UserHistoryScreen(),
-                  UserProfileScreen(),
-                ],
-              ),
-              if (_index == 0) ...[
-                Positioned(
-                  top: MediaQuery.paddingOf(context).top + 6,
-                  left: 12,
-                  child: GlassCircleButton(
-                    tooltip: 'Menu',
-                    icon: Icons.menu_rounded,
-                    onTap: _openDrawer,
-                  ),
+      child: RideLocationScope(
+        controller: _rideLocation,
+        child: RiderNavScope(
+          goHome: _goHome,
+          openPage: _openPage,
+          child: Scaffold(
+            key: _scaffoldKey,
+            drawer: _RiderDrawer(currentIndex: _index, onPick: _onDrawerPick),
+            drawerEnableOpenDragGesture: _index == 0,
+            body: Stack(
+              fit: StackFit.expand,
+              children: [
+                IndexedStack(
+                  index: _index,
+                  children: const [
+                    UserHomeMapScreen(),
+                    UserActiveRentalScreen(),
+                    UserHistoryScreen(),
+                    UserProfileScreen(),
+                  ],
                 ),
-                Positioned(
-                  top: MediaQuery.paddingOf(context).top + 6,
-                  right: 12,
-                  child: const _MapBell(),
-                ),
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 20),
-                      child: _ScanDock(onTap: _openScan),
+                if (_index == 0) ...[
+                  Positioned(
+                    top: MediaQuery.paddingOf(context).top + 6,
+                    left: 12,
+                    child: GlassCircleButton(
+                      tooltip: 'Menu',
+                      icon: Icons.menu_rounded,
+                      onTap: _openDrawer,
                     ),
                   ),
-                ),
+                  Positioned(
+                    top: MediaQuery.paddingOf(context).top + 6,
+                    right: 12,
+                    child: const _MapBell(),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 20),
+                        child: _ScanDock(onTap: _openScan),
+                      ),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -143,26 +148,40 @@ class _MapBell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Material(
-      color: isDark
-          ? const Color(0xE6182233)
-          : Colors.white.withValues(alpha: 0.96),
-      shape: const CircleBorder(),
-      elevation: 6,
-      shadowColor: Colors.black.withValues(alpha: 0.22),
-      child: NotificationBellButton(
-        color: isDark ? const Color(0xFFE8EEF6) : const Color(0xFF111827),
-        alignBelow: true,
+    final bg = isDark
+        ? Colors.white.withValues(alpha: 0.10)
+        : Colors.white.withValues(alpha: 0.48);
+    final rim = Colors.white.withValues(alpha: isDark ? 0.18 : 0.78);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.10),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Material(
+            color: bg,
+            shape: CircleBorder(side: BorderSide(color: rim)),
+            child: NotificationBellButton(
+              color: isDark ? const Color(0xFFE8EEF6) : const Color(0xFF111827),
+              alignBelow: true,
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
 class _RiderDrawer extends StatelessWidget {
-  const _RiderDrawer({
-    required this.currentIndex,
-    required this.onPick,
-  });
+  const _RiderDrawer({required this.currentIndex, required this.onPick});
 
   final int currentIndex;
   final ValueChanged<int> onPick;
@@ -225,7 +244,9 @@ class _RiderDrawer extends StatelessWidget {
                   children: [
                     CircleAvatar(
                       radius: 26,
-                      backgroundColor: QrideBrand.accent.withValues(alpha: 0.16),
+                      backgroundColor: QrideBrand.accent.withValues(
+                        alpha: 0.16,
+                      ),
                       foregroundColor: QrideBrand.accent,
                       child: Text(
                         initial,
@@ -264,7 +285,10 @@ class _RiderDrawer extends StatelessWidget {
                         ],
                       ),
                     ),
-                    Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: cs.onSurfaceVariant,
+                    ),
                   ],
                 ),
               ),
@@ -398,7 +422,11 @@ class _ScanDock extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.qr_code_scanner_rounded, color: Colors.white, size: 24),
+                  Icon(
+                    Icons.qr_code_scanner_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
                   SizedBox(width: 10),
                   Text(
                     'Scan',
