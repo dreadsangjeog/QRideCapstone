@@ -108,13 +108,19 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# App icon: bicycle mark only (no word in PNG). Regenerate after changing
-# assets/images/qride_app_icon.png → `dart run flutter_launcher_icons`
+# App icon: blue bike mark (same as in-app QrideBikeMark).
+# Regenerate after changing assets/images/qride_app_icon.png →
+# `dart run flutter_launcher_icons`
 flutter_launcher_icons:
   android: true
   ios: true
   image_path: assets/images/qride_app_icon.png
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: assets/images/qride_app_icon.png
-  adaptive_icon_foreground_inset: 8
+  adaptive_icon_foreground_inset: 12
   remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: assets/images/qride_app_icon.png
+    background_color: "#FFFFFF"
+    theme_color: "#007AFF"

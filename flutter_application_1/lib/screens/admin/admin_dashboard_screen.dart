@@ -3,23 +3,25 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/bike.dart';
 import '../../models/rental.dart';
 import '../../models/rental_location.dart';
 import '../../models/rental_with_bike.dart';
+import '../../widgets/qride_brand.dart';
 import 'admin_generate_qr_screen.dart';
 import 'admin_history_tab.dart';
 import 'admin_home_tab.dart';
 import 'admin_map_tab.dart';
+import 'admin_reports_tab.dart';
 import 'admin_requests_tab.dart';
 import 'admin_verify_users_tab.dart';
 import '../../services/admin_repository.dart';
 import '../../services/analytics_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/supabase_client.dart';
+import '../../theme/brand.dart';
 import '../notifications_screen.dart';
 
 part 'admin_dashboard_widgets.dart';
@@ -140,18 +142,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const adminHeaderBlue = Color(0xFF007AFF);
+    final cs = Theme.of(context).colorScheme;
+    final isDark = cs.brightness == Brightness.dark;
+    final bar = isDark ? QrideBrand.night : Colors.white;
+    final onBar = isDark ? Colors.white : const Color(0xFF111827);
 
     if (!_adminGatePassed) {
       return Scaffold(
+        backgroundColor: isDark ? QrideBrand.night : const Color(0xFFF3F6FB),
         appBar: AppBar(
           title: const Text(
             'QRide Admin',
             style: TextStyle(fontWeight: FontWeight.w800),
           ),
           automaticallyImplyLeading: false,
-          backgroundColor: adminHeaderBlue,
-          foregroundColor: Colors.white,
+          backgroundColor: bar,
+          foregroundColor: onBar,
           elevation: 0,
         ),
         body: const Center(child: CircularProgressIndicator()),
@@ -163,44 +169,68 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       initialIndex: 0,
       child: Builder(
         builder: (context) => Scaffold(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        backgroundColor: isDark ? QrideBrand.night : const Color(0xFFF3F6FB),
         appBar: AppBar(
-          title: const Text(
-            'QRide Admin',
-            style: TextStyle(fontWeight: FontWeight.w800),
+          title: Row(
+            children: [
+              const QrideBikeMark(size: 34),
+              const SizedBox(width: 10),
+              const Text(
+                'QRide',
+                style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: -0.4),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: QrideBrand.accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'Admin',
+                  style: TextStyle(
+                    color: QrideBrand.accent,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
           ),
           automaticallyImplyLeading: false,
-          backgroundColor: adminHeaderBlue,
-          foregroundColor: Colors.white,
+          backgroundColor: bar,
+          foregroundColor: onBar,
           elevation: 0,
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
           actions: [
-            NotificationBellButton(controller: _inbox, color: Colors.white),
+            NotificationBellButton(controller: _inbox, color: onBar),
             IconButton(
               icon: const Icon(Icons.logout_rounded),
               tooltip: 'Log out',
               onPressed: () => _confirmLogout(context),
             ),
+            const SizedBox(width: 6),
           ],
           bottom: TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
-            indicatorColor: Colors.white,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white70,
-            indicatorSize: TabBarIndicatorSize.label,
-            dividerColor: Colors.transparent,
+            indicator: BoxDecoration(
+              color: QrideBrand.accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            indicatorSize: TabBarIndicatorSize.tab,
+            labelColor: QrideBrand.accent,
+            unselectedLabelColor: onBar.withValues(alpha: 0.55),
+            labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            unselectedLabelStyle:
+                const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            dividerColor: cs.outlineVariant.withValues(alpha: 0.35),
             tabs: [
-              const Tab(
-                text: 'Dashboard',
-                icon: Icon(Icons.space_dashboard_outlined),
-              ),
-              const Tab(
-                text: 'Bikes',
-                icon: Icon(Icons.directions_bike_outlined),
-              ),
+              const Tab(text: '  Dashboard  '),
+              const Tab(text: '  Bikes  '),
               Tab(
-                text: 'Requests',
-                icon: Badge(
+                child: Badge(
                   isLabelVisible: _pendingRequestCount > 0,
                   backgroundColor: const Color(0xFFE53935),
                   textColor: Colors.white,
@@ -209,29 +239,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ? '99+'
                         : '$_pendingRequestCount',
                   ),
-                  child: const Icon(Icons.inbox_outlined),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10),
+                    child: Text('Requests'),
+                  ),
                 ),
               ),
-              const Tab(
-                text: 'Active',
-                icon: Icon(Icons.play_circle_outline),
-              ),
-              const Tab(
-                text: 'History',
-                icon: Icon(Icons.history_rounded),
-              ),
-              const Tab(
-                text: 'Map',
-                icon: Icon(Icons.map_outlined),
-              ),
-              const Tab(
-                text: 'Users',
-                icon: Icon(Icons.badge_outlined),
-              ),
-              const Tab(
-                text: 'Reports',
-                icon: Icon(Icons.insights_outlined),
-              ),
+              const Tab(text: '  Active  '),
+              const Tab(text: '  History  '),
+              const Tab(text: '  Map  '),
+              const Tab(text: '  Users  '),
+              const Tab(text: '  Reports  '),
             ],
           ),
         ),
@@ -253,7 +271,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             AdminHistoryTab(repo: _repo),
             AdminMapTab(repo: _repo),
             const AdminVerifyUsersTab(),
-            _ReportsTab(repo: AnalyticsRepository()),
+            AdminReportsTab(repo: AnalyticsRepository()),
           ],
         ),
       ),

@@ -25,7 +25,6 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
     (label: 'Ended', status: 'ended'),
     (label: 'Active', status: 'active'),
     (label: 'Pending', status: 'pending'),
-    (label: 'Rejected', status: 'rejected'),
   ];
 
   String? _statusFilter;
