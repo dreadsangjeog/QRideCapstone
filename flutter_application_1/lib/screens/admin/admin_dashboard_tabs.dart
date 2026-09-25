@@ -11,6 +11,7 @@ class _BikesTab extends StatefulWidget {
 class _BikesTabState extends State<_BikesTab> {
   late Future<List<Bike>> _future = widget.repo.fetchBikes();
   String? _statusFilter;
+  bool _newestFirst = false;
 
   Future<void> _refresh() async {
     setState(() {
@@ -58,6 +59,17 @@ class _BikesTabState extends State<_BikesTab> {
                   (b) => _statusFilter == null || b.status == _statusFilter,
                 )
                 .toList();
+            if (_newestFirst) {
+              filtered.sort((a, b) {
+                final at = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                final bt = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                return bt.compareTo(at);
+              });
+            } else {
+              filtered.sort(
+                (a, b) => a.code.toLowerCase().compareTo(b.code.toLowerCase()),
+              );
+            }
             if (bikes.isEmpty) {
               return _EmptyState(
                 icon: Icons.directions_bike_outlined,
@@ -91,9 +103,23 @@ class _BikesTabState extends State<_BikesTab> {
                             : null,
                       ),
                       const SizedBox(height: 16),
-                      _StatusFilterBar(
-                        selected: _statusFilter,
-                        onSelected: (s) => setState(() => _statusFilter = s),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: _StatusFilterBar(
+                              selected: _statusFilter,
+                              onSelected: (s) =>
+                                  setState(() => _statusFilter = s),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          AdminSortToggle(
+                            newestFirst: _newestFirst,
+                            onChanged: (newest) =>
+                                setState(() => _newestFirst = newest),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       if (filtered.isEmpty)

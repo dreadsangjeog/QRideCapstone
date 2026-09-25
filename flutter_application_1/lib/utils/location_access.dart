@@ -47,15 +47,11 @@ Future<bool> ensureLocationAccessForRental(BuildContext context) async {
     permission = await Geolocator.requestPermission();
   }
 
+  // While-in-use is enough to scan and request a bike. "Allow all the time"
+  // is an Android settings page, not a dialog — opening it here leaves the
+  // scanner waiting. Background access is requested when the ride starts.
   if (permission == LocationPermission.whileInUse ||
       permission == LocationPermission.always) {
-    if (await Permission.notification.isDenied) {
-      await Permission.notification.request();
-    }
-    if (permission == LocationPermission.whileInUse &&
-        await Permission.locationAlways.isDenied) {
-      await Permission.locationAlways.request();
-    }
     return true;
   }
 
@@ -108,6 +104,45 @@ Future<bool> ensureLocationAccessForRental(BuildContext context) async {
     },
   );
   return false;
+}
+
+bool _offeredBackgroundLocation = false;
+
+/// Once a ride is active, explain that pocket / screen-off sharing needs
+/// "Allow all the time". Declining still leaves while-in-use GPS working.
+Future<void> offerBackgroundLocation(BuildContext context) async {
+  if (_offeredBackgroundLocation) return;
+  final permission = await Geolocator.checkPermission();
+  if (permission == LocationPermission.always) return;
+  if (permission != LocationPermission.whileInUse) return;
+  if (await Permission.locationAlways.isGranted) return;
+  _offeredBackgroundLocation = true;
+  if (!context.mounted) return;
+  final open = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: const Icon(Icons.my_location_rounded),
+      title: const Text('Keep sharing off-screen'),
+      content: const Text(
+        'Choose Allow all the time so QRide can share your ride location '
+        'with the screen off or while you use another app. '
+        'Allow only while using the app still works when QRide is open.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Not now'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Choose permission'),
+        ),
+      ],
+    ),
+  );
+  if (open == true) {
+    await Permission.locationAlways.request();
+  }
 }
 
 /// Silent check used right before submitting a rental request.

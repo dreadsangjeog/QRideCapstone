@@ -36,6 +36,19 @@ class AuthValidators {
     return null;
   }
 
+  static String? birthdate(String? v) {
+    final s = (v ?? '').trim();
+    final d = DateTime.tryParse(s);
+    if (d == null || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(s)) {
+      return 'Choose your birthdate';
+    }
+    final today = DateTime.now();
+    final end = DateTime(today.year, today.month, today.day);
+    if (!d.isBefore(end)) return 'Birthdate must be in the past';
+    if (d.year < 1920) return 'Enter a real birthdate';
+    return null;
+  }
+
   static String? username(String? v) {
     final s = (v ?? '').trim();
     if (s.isEmpty) return 'Username is required';

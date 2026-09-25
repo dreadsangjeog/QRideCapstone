@@ -13,12 +13,14 @@ import 'screens/register_screen.dart';
 import 'screens/user_root_shell.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
+import 'theme/login_season.dart';
 import 'theme/theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     await loadSavedThemeMode();
+    await loadCachedLoginSeason();
     SupabaseConfig.assertConfigured();
     await Supabase.initialize(
       url: SupabaseConfig.effectiveUrl,
@@ -28,6 +30,7 @@ Future<void> main() async {
       ),
     );
     await NotificationService.init();
+    await syncLoginSeason();
     await NotificationService.requestPermission();
     runApp(const QRideApp());
   } catch (e, st) {

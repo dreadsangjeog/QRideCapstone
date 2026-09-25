@@ -22,6 +22,7 @@ Deno.serve(async (req) => {
     const firstName = String(body.first_name ?? "").trim().replace(/\s+/g, " ");
     const middleName = String(body.middle_name ?? "").trim().replace(/\s+/g, " ");
     const lastName = String(body.last_name ?? "").trim().replace(/\s+/g, " ");
+    const birthdate = String(body.birthdate ?? "").trim();
 
     if (!email || !username || !password || !otp) {
       return json({ error: "Email, username, password, and code are required." }, 400);
@@ -37,7 +38,7 @@ Deno.serve(async (req) => {
     const { data: row, error: selErr } = await admin
       .from("pending_signups")
       .select(
-        "username,password_hash,otp_hash,expires_at,first_name,middle_name,last_name",
+        "username,password_hash,otp_hash,expires_at,first_name,middle_name,last_name,birthdate",
       )
       .eq("email", email)
       .maybeSingle();
@@ -68,7 +69,8 @@ Deno.serve(async (req) => {
     if (
       String(row.first_name ?? "") !== firstName ||
       String(row.middle_name ?? "") !== middleName ||
-      String(row.last_name ?? "") !== lastName
+      String(row.last_name ?? "") !== lastName ||
+      String(row.birthdate ?? "").slice(0, 10) !== birthdate
     ) {
       return json({ error: "Name does not match this signup. Request a new code." }, 400);
     }
@@ -115,6 +117,7 @@ Deno.serve(async (req) => {
         first_name: firstName,
         middle_name: middleName,
         last_name: lastName,
+        birthdate,
       },
     });
 

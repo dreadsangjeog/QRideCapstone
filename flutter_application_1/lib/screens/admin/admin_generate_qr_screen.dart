@@ -372,7 +372,7 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'This square is the real QR code (drawn in the app). Screenshot or print; no external QR API.',
+                      'Screenshot or print this code and attach it to the bike.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: cs.onSurfaceVariant,
                         height: 1.4,
@@ -396,6 +396,7 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                     TextFormField(
                       controller: _codeCtrl,
                       readOnly: _fieldsLocked,
+                      enabled: !_fieldsLocked,
                       decoration: InputDecoration(
                         labelText: 'Bike code',
                         hintText: 'e.g. BIKE-XK2P9M',
@@ -435,11 +436,14 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                     TextFormField(
                       controller: _labelCtrl,
                       readOnly: _fieldsLocked,
-                      decoration: const InputDecoration(
+                      enabled: !_fieldsLocked,
+                      decoration: InputDecoration(
                         labelText: 'Bike name / location',
                         hintText: 'e.g. North rack #3',
-                        border: OutlineInputBorder(),
-                        helperText: 'Stored in Supabase (bikes.label).',
+                        border: const OutlineInputBorder(),
+                        helperText: _isExisting
+                            ? null
+                            : 'A short name so staff can recognize this bike.',
                       ),
                       validator: (v) {
                         if (_isExisting) return null;
@@ -468,11 +472,12 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                         key: ValueKey(_status),
                         initialValue:
                             _status == 'maintenance' ? 'maintenance' : 'available',
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Status',
-                          border: OutlineInputBorder(),
-                          helperText:
-                              'New bikes start as Available. Rented is set when a rider rents.',
+                          border: const OutlineInputBorder(),
+                          helperText: _isExisting
+                              ? null
+                              : 'New bikes start as Available. Rented is set when a rider rents.',
                         ),
                         items: const [
                           DropdownMenuItem(

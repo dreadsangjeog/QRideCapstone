@@ -27,6 +27,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _firstName = TextEditingController();
   final _middleName = TextEditingController();
   final _lastName = TextEditingController();
+  final _birthdate = TextEditingController();
   final _otp = TextEditingController();
 
   bool _busy = false;
@@ -48,6 +49,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _firstName.dispose();
     _middleName.dispose();
     _lastName.dispose();
+    _birthdate.dispose();
     _otp.dispose();
     super.dispose();
   }
@@ -69,6 +71,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       setState(() {});
     });
+  }
+
+  Future<void> _pickBirthdate() async {
+    final now = DateTime.now();
+    final initial = DateTime.tryParse(_birthdate.text) ??
+        DateTime(now.year - 18, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1920),
+      lastDate: DateTime(now.year, now.month, now.day)
+          .subtract(const Duration(days: 1)),
+    );
+    if (picked == null) return;
+    final m = picked.month.toString().padLeft(2, '0');
+    final d = picked.day.toString().padLeft(2, '0');
+    setState(() => _birthdate.text = '${picked.year}-$m-$d');
   }
 
   Future<void> _continue() async {
@@ -115,6 +134,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           firstName: _firstName.text,
           middleName: _middleName.text,
           lastName: _lastName.text,
+          birthdate: _birthdate.text,
         );
       } else {
         await AuthService.sendRegistrationOtp(
@@ -124,6 +144,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           firstName: _firstName.text,
           middleName: _middleName.text,
           lastName: _lastName.text,
+          birthdate: _birthdate.text,
         );
       }
       if (!mounted) return;
@@ -186,6 +207,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         firstName: _firstName.text,
         middleName: _middleName.text,
         lastName: _lastName.text,
+        birthdate: _birthdate.text,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -290,6 +312,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   v,
                                   label: 'Last name',
                                 ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                controller: _birthdate,
+                                readOnly: true,
+                                textInputAction: TextInputAction.next,
+                                decoration: const InputDecoration(
+                                  labelText: 'Birthdate',
+                                  prefixIcon: Icon(Icons.cake_outlined),
+                                ),
+                                validator: AuthValidators.birthdate,
+                                onTap: _pickBirthdate,
                               ),
                               const SizedBox(height: 18),
                               _sectionLabel(context, 'Account'),

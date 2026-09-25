@@ -11,10 +11,14 @@ class AdminRepository {
     final rows = await SupabaseClientProvider.client
         .from('bikes')
         .select()
-        .order('code');
-    return (rows as List<dynamic>)
+        .order('code', ascending: true);
+    final bikes = (rows as List<dynamic>)
         .map((e) => Bike.fromJson(e as Map<String, dynamic>))
         .toList();
+    bikes.sort(
+      (a, b) => a.code.toLowerCase().compareTo(b.code.toLowerCase()),
+    );
+    return bikes;
   }
 
   /// Proposes a random bike code (`BIKE-` + 6 chars) and checks Supabase until unused.

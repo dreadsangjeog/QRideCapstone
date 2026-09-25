@@ -146,10 +146,9 @@ class NotificationBellButton extends StatelessWidget {
           tooltip: 'Notifications',
           color: color,
           onPressed: () => _openPanel(context, c),
-          icon: Badge(
-            isLabelVisible: count > 0,
-            label: Text(count > 99 ? '99+' : '$count'),
-            child: const Icon(Icons.notifications_outlined),
+          icon: HeaderCountIcon(
+            count: count,
+            child: Icon(Icons.notifications_outlined, color: color),
           ),
         );
       },
@@ -329,6 +328,90 @@ class _NotificationsInboxPanelState extends State<NotificationsInboxPanel> {
           ),
         ),
       ],
+    );
+  }
+}
+
+const _countRed = Color(0xFFE53935);
+
+/// Red count that stays inside the header instead of drawing outside it.
+class HeaderCountBadge extends StatelessWidget {
+  const HeaderCountBadge(this.count, {super.key});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 99 ? '99+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: _countRed,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white, width: 1.5),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          height: 1.1,
+        ),
+      ),
+    );
+  }
+}
+
+class HeaderCountLabel extends StatelessWidget {
+  const HeaderCountLabel(this.label, this.count, {super.key});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label),
+          if (count > 0) ...[
+            const SizedBox(width: 6),
+            HeaderCountBadge(count),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class HeaderCountIcon extends StatelessWidget {
+  const HeaderCountIcon({super.key, required this.count, required this.child});
+
+  final int count;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          child,
+          if (count > 0)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: HeaderCountBadge(count),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -15,6 +15,7 @@ import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
 import '../services/rental_repository.dart';
 import '../services/supabase_client.dart';
+import '../utils/location_access.dart';
 import '../widgets/heading_map_pin.dart';
 import '../widgets/qride_map_tiles.dart';
 import '../widgets/user_portal_chrome.dart';
@@ -108,7 +109,10 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
         _rental = rental;
         _loading = false;
       });
-      if (rental?.isActive == true) _startRideTimer();
+      if (rental?.isActive == true) {
+        _startRideTimer();
+        unawaited(offerBackgroundLocation(context));
+      }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }

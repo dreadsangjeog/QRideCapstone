@@ -24,12 +24,16 @@ Deno.serve(async (req) => {
     const firstName = cleanName(body.first_name);
     const middleName = cleanName(body.middle_name);
     const lastName = cleanName(body.last_name);
+    const birthdate = String(body.birthdate ?? "").trim();
 
     if (!email || !username || !password) {
       return json({ error: "Email, username, and password are required." }, 400);
     }
     const nameErr = validateLegalName(firstName, middleName, lastName);
     if (nameErr) return json({ error: nameErr }, 400);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthdate)) {
+      return json({ error: "Choose your birthdate." }, 400);
+    }
     if (password.length < 6) {
       return json({ error: "Password must be at least 6 characters." }, 400);
     }
@@ -87,6 +91,7 @@ Deno.serve(async (req) => {
         first_name: firstName,
         middle_name: middleName || null,
         last_name: lastName,
+        birthdate,
         password_hash: passwordHash,
         otp_hash: otpHash,
         expires_at: expiresAt,

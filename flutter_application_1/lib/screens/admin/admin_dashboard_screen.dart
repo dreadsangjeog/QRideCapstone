@@ -21,6 +21,7 @@ import 'admin_reports_tab.dart';
 import 'admin_requests_tab.dart';
 import 'admin_verify_users_tab.dart';
 import '../../services/admin_repository.dart';
+import '../../services/kyc_repository.dart';
 import '../../services/analytics_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/supabase_client.dart';
@@ -41,11 +42,13 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final _repo = AdminRepository();
+  final _kyc = KycRepository();
   final _inbox = NotificationInboxController();
   final _requestsTabKey = GlobalKey<AdminRequestsTabState>();
   RealtimeChannel? _pendingChannel;
   bool _adminGatePassed = false;
   int _pendingRequestCount = 0;
+  int _pendingUserCount = 0;
 
   @override
   void initState() {
@@ -92,9 +95,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Future<void> _refreshPendingCount() async {
     try {
-      final count = await _repo.countPendingRentals();
+      final results = await Future.wait<int>([
+        _repo.countPendingRentals(),
+        _kyc.countPendingReviews(),
+      ]);
       if (!mounted) return;
-      setState(() => _pendingRequestCount = count);
+      setState(() {
+        _pendingRequestCount = results[0];
+        _pendingUserCount = results[1];
+      });
     } catch (e) {
       debugPrint('pending request count failed: $e');
     }
@@ -112,6 +121,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             unawaited(_refreshPendingCount());
             unawaited(_requestsTabKey.currentState?.refresh());
           },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'profiles',
+          callback: (_) => unawaited(_refreshPendingCount()),
         )
         .subscribe();
   }
@@ -213,6 +228,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           surfaceTintColor: Colors.transparent,
           flexibleSpace: const GlassAppBarBackdrop(),
           actions: [
+            AdminSeasonToggle(color: onBar),
             AdminThemeToggle(color: onBar),
             NotificationBellButton(controller: _inbox, color: onBar),
             IconButton(
@@ -239,26 +255,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             tabs: [
               const Tab(text: '  Dashboard  '),
               const Tab(text: '  Bikes  '),
-              Tab(
-                child: Badge(
-                  isLabelVisible: _pendingRequestCount > 0,
-                  backgroundColor: const Color(0xFFE53935),
-                  textColor: Colors.white,
-                  label: Text(
-                    _pendingRequestCount > 99
-                        ? '99+'
-                        : '$_pendingRequestCount',
-                  ),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 10),
-                    child: Text('Requests'),
-                  ),
-                ),
-              ),
+              Tab(child: HeaderCountLabel('Requests', _pendingRequestCount)),
               const Tab(text: '  Active  '),
               const Tab(text: '  History  '),
               const Tab(text: '  Map  '),
-              const Tab(text: '  Users  '),
+              Tab(child: HeaderCountLabel('Users', _pendingUserCount)),
               const Tab(text: '  Reports  '),
             ],
           ),

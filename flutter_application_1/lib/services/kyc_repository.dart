@@ -13,6 +13,7 @@ class KycProfile {
     this.firstName,
     this.middleName,
     this.lastName,
+    this.birthdate,
   });
 
   final String status;
@@ -22,6 +23,7 @@ class KycProfile {
   final String? firstName;
   final String? middleName;
   final String? lastName;
+  final String? birthdate;
 
   String get legalName {
     final parts = [firstName, middleName, lastName]
@@ -49,6 +51,7 @@ class KycPendingUser {
     this.firstName,
     this.middleName,
     this.lastName,
+    this.createdAt,
   });
 
   final String id;
@@ -56,6 +59,7 @@ class KycPendingUser {
   final String? firstName;
   final String? middleName;
   final String? lastName;
+  final DateTime? createdAt;
 
   String get legalName {
     final parts = [firstName, middleName, lastName]
@@ -63,6 +67,13 @@ class KycPendingUser {
         .where((s) => s.isNotEmpty);
     return parts.join(' ');
   }
+
+  /// Legal name when it is on file, otherwise the login username.
+  String get displayName {
+    final name = legalName.trim();
+    return name.isEmpty ? username : name;
+  }
+
   final String status;
   final String? idImagePath;
   final String? selfieImagePath;
@@ -83,7 +94,7 @@ class KycRepository {
       final row = await SupabaseClientProvider.client
           .from('profiles')
           .select(
-            'verification_status, id_image_path, selfie_image_path, verification_note, first_name, middle_name, last_name',
+            'verification_status, id_image_path, selfie_image_path, verification_note, first_name, middle_name, last_name, birthdate',
           )
           .eq('id', uid)
           .maybeSingle();
@@ -127,6 +138,7 @@ class KycRepository {
         firstName: row['first_name'] as String?,
         middleName: row['middle_name'] as String?,
         lastName: row['last_name'] as String?,
+        birthdate: row['birthdate']?.toString(),
       );
 
   /// Saves the name used to match the uploaded ID. No-op once verified.
@@ -134,6 +146,7 @@ class KycRepository {
     required String firstName,
     String? middleName,
     required String lastName,
+    String? birthdate,
   }) async {
     final uid = SupabaseClientProvider.client.auth.currentUser?.id;
     if (uid == null) throw StateError('Not signed in');
@@ -147,6 +160,7 @@ class KycRepository {
           ? null
           : middleName!.trim(),
       'last_name': lastName.trim(),
+      if ((birthdate ?? '').trim().isNotEmpty) 'birthdate': birthdate!.trim(),
     }).eq('id', uid);
   }
 
@@ -220,17 +234,24 @@ class KycRepository {
 
     Future<List<dynamic>> run({required bool withSideSelfies}) async {
       final cols = withSideSelfies
-          ? 'id, username, role, verification_status, id_image_path, selfie_image_path, selfie_left_image_path, selfie_right_image_path, verification_note, first_name, middle_name, last_name'
-          : 'id, username, role, verification_status, id_image_path, selfie_image_path, verification_note';
+          ? 'id, username, role, verification_status, id_image_path, selfie_image_path, selfie_left_image_path, selfie_right_image_path, verification_note, first_name, middle_name, last_name, created_at'
+          : 'id, username, role, verification_status, id_image_path, selfie_image_path, verification_note, created_at';
       var filter =
           SupabaseClientProvider.client.from('profiles').select(cols);
       if (status != null && status.isNotEmpty) {
         filter = filter.eq('verification_status', status);
       }
       if (q.isNotEmpty) {
-        filter = filter.ilike('username', '%$q%');
+        final safe = q.replaceAll(RegExp(r'[%*,()]'), '');
+        if (safe.isNotEmpty) {
+          filter = withSideSelfies
+              ? filter.or(
+                  'username.ilike.%$safe%,first_name.ilike.%$safe%,middle_name.ilike.%$safe%,last_name.ilike.%$safe%',
+                )
+              : filter.ilike('username', '%$safe%');
+        }
       }
-      return await filter.order('username').limit(100);
+      return await filter.order('username', ascending: true).limit(100);
     }
 
     List<dynamic> rows;
@@ -250,7 +271,7 @@ class KycRepository {
         if (q.isNotEmpty) {
           filter = filter.ilike('username', '%$q%');
         }
-        rows = await filter.order('username').limit(100);
+        rows = await filter.order('username', ascending: true).limit(100);
       }
     }
 
@@ -271,14 +292,28 @@ class KycRepository {
             selfieLeftPath: m['selfie_left_image_path'] as String?,
             selfieRightPath: m['selfie_right_image_path'] as String?,
             note: m['verification_note'] as String?,
+            createdAt: DateTime.tryParse(m['created_at']?.toString() ?? ''),
           );
         })
         .whereType<KycPendingUser>()
-        .toList();
+        .toList()
+      ..sort(
+        (a, b) => a.username.toLowerCase().compareTo(b.username.toLowerCase()),
+      );
   }
 
   Future<List<KycPendingUser>> fetchForAdmin() async {
     return searchUsers(status: 'pending');
+  }
+
+  /// Riders waiting for an ID review. Admins are excluded.
+  Future<int> countPendingReviews() async {
+    final rows = await SupabaseClientProvider.client
+        .from('profiles')
+        .select('id')
+        .eq('verification_status', 'pending')
+        .neq('role', 'admin');
+    return (rows as List<dynamic>).length;
   }
 
   Future<String> signedUrl(String path) async {

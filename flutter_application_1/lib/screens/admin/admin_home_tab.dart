@@ -729,124 +729,195 @@ class _TodayCard extends StatelessWidget {
     final daily = week?.daily ?? const <ReportDayPoint>[];
     final today = daily.isEmpty ? null : daily.last;
 
-    final chart = daily.isEmpty
-        ? const SizedBox(height: 72)
-        : ReportLineChart(
-            height: 72,
-            showAxes: false,
-            onDark: true,
-            labels: [for (final d in daily) DateFormat('EEE').format(d.day)],
-            series: [
-              ReportLineSeries(
-                label: 'Rides',
-                color: Colors.white,
-                values: [for (final d in daily) d.completed.toDouble()],
+    Widget chartFor(double height) {
+      if (daily.isEmpty) {
+        final darkEmpty = Theme.of(context).brightness == Brightness.dark;
+        return SizedBox(
+          height: height,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'No rides this week',
+              style: TextStyle(
+                color: darkEmpty
+                    ? Colors.white.withValues(alpha: 0.7)
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
               ),
-            ],
-            tooltipTitle: (i) => DateFormat('EEEE, MMM d').format(daily[i].day),
-            tooltipLines: (i) => [
-              (
-                label: 'Rides',
-                value: '${daily[i].completed}',
-                color: const Color(0xFF22C55E),
-              ),
-              (
-                label: 'Collected',
-                value: _pesoExact.format(daily[i].collected),
-                color: _pink,
-              ),
-            ],
-          );
+            ),
+          ),
+        );
+      }
+      final darkChart = Theme.of(context).brightness == Brightness.dark;
+      return ReportLineChart(
+        height: height,
+        showAxes: false,
+        onDark: darkChart,
+        labels: [for (final d in daily) DateFormat('EEE').format(d.day)],
+        series: [
+          ReportLineSeries(
+            label: 'Rides',
+            color: darkChart ? Colors.white : QrideBrand.accent,
+            values: [for (final d in daily) d.completed.toDouble()],
+          ),
+        ],
+        tooltipTitle: (i) => DateFormat('EEEE, MMM d').format(daily[i].day),
+        tooltipLines: (i) => [
+          (
+            label: 'Rides',
+            value: '${daily[i].completed}',
+            color: const Color(0xFF22C55E),
+          ),
+          (
+            label: 'Collected',
+            value: _pesoExact.format(daily[i].collected),
+            color: _pink,
+          ),
+        ],
+      );
+    }
+
+    final rides = today?.completed ?? 0;
+    final collected = _peso.format(today?.collected ?? 0);
+    final rideTime = (today?.rideMinutes ?? 0) <= 0
+        ? '0m'
+        : formatRideDurationMinutes(today!.rideMinutes);
+    final yesterday = daily.length >= 2 ? daily[daily.length - 2] : null;
+    final rideDelta =
+        yesterday == null ? null : rides - yesterday.completed;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
+    final ink = isDark ? Colors.white : cs.onSurface;
+    final muted = isDark
+        ? Colors.white.withValues(alpha: 0.75)
+        : cs.onSurfaceVariant;
+
+    final stats = Row(
+      children: [
+        Expanded(child: _todayStat('$rides', 'Rides', isDark)),
+        const SizedBox(width: 8),
+        Expanded(child: _todayStat(collected, 'Collected', isDark)),
+        const SizedBox(width: 8),
+        Expanded(child: _todayStat(rideTime, 'Ride time', isDark)),
+      ],
+    );
 
     return GlassPanel(
-      tint: const Color(0xB30A4DB8),
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+      tint: isDark ? const Color(0xB30A4DB8) : null,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  const Text(
-                    'Today',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    DateFormat('MMM d').format(DateTime.now()),
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.75),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _todayRow(
-                Icons.task_alt_rounded,
-                'Rides completed',
-                '${today?.completed ?? 0}',
-              ),
-              _todayRow(
-                Icons.payments_rounded,
-                'Collected',
-                _peso.format(today?.collected ?? 0),
-              ),
-              _todayRow(
-                Icons.timer_outlined,
-                'Ride time',
-                (today?.rideMinutes ?? 0) <= 0
-                    ? '0m'
-                    : formatRideDurationMinutes(today!.rideMinutes),
-              ),
-              if (fill) const Spacer() else const SizedBox(height: 8),
               Text(
-                'Last 7 days · hover for details',
+                'Today',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+                  color: ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
                 ),
               ),
-              const SizedBox(height: 4),
-              chart,
+              const Spacer(),
+              Text(
+                DateFormat('EEE, MMM d').format(DateTime.now()),
+                style: TextStyle(
+                  color: muted,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
             ],
           ),
+          const SizedBox(height: 12),
+          stats,
+          if (rideDelta != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              rideDelta == 0
+                  ? 'Same rides as yesterday'
+                  : '${rideDelta > 0 ? '+' : ''}$rideDelta rides vs yesterday',
+              style: TextStyle(
+                color: muted,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Text(
+            'This week',
+            style: TextStyle(
+              color: muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (fill)
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) =>
+                    chartFor(constraints.maxHeight),
+              ),
+            )
+          else
+            chartFor(96),
+        ],
+      ),
     );
   }
 
-  static Widget _todayRow(IconData icon, String label, String value) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
+  static Widget _todayStat(String value, String label, bool onDark) {
+    final valueColor = onDark ? Colors.white : const Color(0xFF0F2744);
+    final labelColor = onDark
+        ? Colors.white.withValues(alpha: 0.78)
+        : const Color(0xFF5B6B80);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: onDark
+            ? Colors.white.withValues(alpha: 0.14)
+            : const Color(0xFFF4F7FB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: onDark
+              ? Colors.white.withValues(alpha: 0.16)
+              : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 9),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.8)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.85),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-            ),
             Text(
               value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 17,
-                letterSpacing: -0.3,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: valueColor,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+                letterSpacing: -0.4,
+                height: 1.1,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: labelColor,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
               ),
             ),
           ],
         ),
-      );
+      ),
+    );
+  }
 }
 
 // ── Shared panels ─────────────────────────────────────────────────────────────

@@ -47,6 +47,7 @@ begin
   from auth.users u
   where u.id = v_uid;
 
+  perform set_config('storage.allow_delete_query', 'true', true);
   delete from storage.objects
   where bucket_id = 'kyc-documents'
     and split_part(name, '/', 1) = v_uid::text;

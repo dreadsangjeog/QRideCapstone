@@ -132,6 +132,7 @@ class _BikeCard extends StatelessWidget {
                           children: [
                             IconButton(
                               tooltip: 'QR code',
+                              mouseCursor: SystemMouseCursors.click,
                               icon: const Icon(Icons.qr_code_2_rounded, size: 20),
                               onPressed: onQr,
                               style: IconButton.styleFrom(
@@ -208,7 +209,9 @@ class _StatusFilterBar extends StatelessWidget {
       children: items.map((item) {
         final (value, label, color) = item;
         final isSelected = selected == value;
-        return GestureDetector(
+        return MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
           onTap: () => onSelected(value),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
@@ -233,6 +236,7 @@ class _StatusFilterBar extends StatelessWidget {
               ),
             ),
           ),
+        ),
         );
       }).toList(),
     );
@@ -250,7 +254,9 @@ class _StatusMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return PopupMenuButton<String>(
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: PopupMenuButton<String>(
       tooltip: 'Change status',
       onSelected: onSelected,
       icon: Icon(Icons.more_vert_rounded, size: 20, color: cs.onSurfaceVariant),
@@ -258,6 +264,7 @@ class _StatusMenu extends StatelessWidget {
         _menuItem('available',   'Available',   Icons.check_circle_rounded, const Color(0xFF22C55E)),
         _menuItem('maintenance', 'Maintenance', Icons.build_rounded, cs.error),
       ],
+      ),
     );
   }
 

@@ -95,16 +95,6 @@ class LocationTrackingService {
       await Permission.notification.request();
     }
 
-    // After "while using", ask for Always so iOS / some Androids keep GPS
-    // after the rider leaves QRide. While-in-use + the foreground service
-    // is enough if they decline.
-    if (permission == LocationPermission.whileInUse) {
-      final always = await Permission.locationAlways.status;
-      if (always.isDenied) {
-        await Permission.locationAlways.request();
-      }
-    }
-
     // Screen-off / pocket: Android Doze will freeze GPS unless the rider
     // allows QRide to run unrestricted. Decline is OK; FGS still helps.
     final battery = await Permission.ignoreBatteryOptimizations.status;

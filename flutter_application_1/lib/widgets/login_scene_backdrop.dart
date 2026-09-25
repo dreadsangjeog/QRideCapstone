@@ -7,10 +7,14 @@ import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/brand.dart';
+import '../theme/login_season.dart';
 
-const _bgAsset = 'assets/images/login_winter_bg.jpg';
-const _fgAsset = 'assets/images/login_winter_fg.png';
-const _riderAsset = 'assets/images/login_rider.png';
+const _winterBg = 'assets/images/login_winter_bg.jpg';
+const _winterFg = 'assets/images/login_winter_fg.png';
+const _winterRider = 'assets/images/login_rider.png';
+const _summerBg = 'assets/images/login_summer_bg.jpg';
+const _summerFg = 'assets/images/login_summer_fg.png';
+const _summerRider = 'assets/images/login_rider_summer.png';
 
 // Scene art is 1280×720; background and foreground share the same framing.
 const _sceneW = 1280.0;
@@ -24,9 +28,14 @@ const _cruise = 120.0;
 // Below this width the rider would crowd the form, so only snow animates.
 const _riderMinWidth = 700.0;
 
-// Rider art is 636×673 with wheel hubs at these pixels.
-const _riderW = 636.0;
-const _riderH = 673.0;
+// Winter rider art is 636×673. Summer rider art is square.
+const _winterRiderW = 636.0;
+const _winterRiderH = 673.0;
+const _summerRiderW = 512.0;
+const _summerRiderH = 512.0;
+const _summerTyreR = 90.0;
+const _summerRim = 82.0;
+const _summerHubs = [Offset(106, 408), Offset(405, 408)];
 const _wheelHubs = [Offset(123, 548), Offset(511, 548)];
 const _tyreR = 123.0;
 const _rimR = 102.0;
@@ -65,7 +74,14 @@ class _LoginSceneBackdropState extends State<LoginSceneBackdrop>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    for (final a in const [_bgAsset, _fgAsset, _riderAsset]) {
+    for (final a in const [
+      _winterBg,
+      _winterFg,
+      _winterRider,
+      _summerBg,
+      _summerFg,
+      _summerRider,
+    ]) {
       precacheImage(AssetImage(a), context);
     }
   }
@@ -87,119 +103,182 @@ class _LoginSceneBackdropState extends State<LoginSceneBackdrop>
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, box) {
-        final w = box.maxWidth;
-        final h = box.maxHeight;
-        final s = math.max(w / _sceneW, h / _sceneH);
-        final sceneTop = h - _sceneH * s;
+    return ValueListenableBuilder<LoginSeason>(
+      valueListenable: loginSeason,
+      builder: (context, season, _) {
+        final summer = season == LoginSeason.summer;
+        final bg = summer ? _summerBg : _winterBg;
+        final fg = summer ? _summerFg : _winterFg;
+        final riderAsset = summer ? _summerRider : _winterRider;
+        final artW = summer ? _summerRiderW : _winterRiderW;
+        final artH = summer ? _summerRiderH : _winterRiderH;
+        return LayoutBuilder(
+          builder: (context, box) {
+            final w = box.maxWidth;
+            final h = box.maxHeight;
+            final s = math.max(w / _sceneW, h / _sceneH);
+            final sceneTop = h - _sceneH * s;
 
-        final riderH = _riderSceneH * s;
-        final riderW = riderH * _riderW / _riderH;
-        final bottom = h - (sceneTop + _roadContact * _sceneH * s);
-        final lap = w + riderW * 2;
-        final speed = _cruise * s;
-        final tyreR = _tyreR * riderH / _riderH;
-        final showRider = widget.showRider && w >= _riderMinWidth;
-        final flakes = _flakes
-            .take((w * h / 22000).round().clamp(28, _flakes.length).toInt())
-            .toList();
-        // With no rider, zoom from the top so the road sits under the footer
-        // instead of behind it.
-        Widget scene(String asset) => showRider
-            ? _layer(asset)
-            : Transform.scale(
-                scale: 1.18,
-                alignment: Alignment.topCenter,
-                child: _layer(asset),
-              );
-
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            const ColoredBox(color: Color(0xFFDCEBFA)),
-            scene(_bgAsset),
-            if (showRider)
-              ValueListenableBuilder<double>(
-                valueListenable: _elapsed,
-                builder: (context, t, rider) {
-                  final travelled = t * speed;
-                  return Positioned(
-                    left: travelled % lap - riderW,
-                    bottom: bottom,
-                    width: riderW,
-                    height: riderH,
-                    child: CustomPaint(
-                      painter: _WheelPainter(angle: travelled / tyreR),
-                      child: rider,
-                    ),
+            final riderH = _riderSceneH * s;
+            final riderW = riderH * artW / artH;
+            final bottom = h - (sceneTop + _roadContact * _sceneH * s);
+            final span = w + riderW;
+            final speed = _cruise * s;
+            final artTyre = summer ? _summerTyreR : _tyreR;
+            final tyreR = artTyre * riderH / artH;
+            final showRider = widget.showRider && w >= _riderMinWidth;
+            final flakeCount = summer
+                ? 16
+                : (w * h / 22000).round().clamp(28, _flakes.length);
+            final flakes = _flakes.take(flakeCount).toList();
+            Widget scene(String asset) => showRider
+                ? _layer(asset)
+                : Transform.scale(
+                    scale: 1.18,
+                    alignment: Alignment.topCenter,
+                    child: _layer(asset),
                   );
-                },
-                child: Image.asset(
-                  _riderAsset,
-                  fit: BoxFit.fill,
-                  filterQuality: FilterQuality.medium,
-                  gaplessPlayback: true,
+
+            final rider = Image.asset(
+              riderAsset,
+              fit: BoxFit.fill,
+              filterQuality: FilterQuality.medium,
+              gaplessPlayback: true,
+            );
+
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                ColoredBox(
+                  color: summer
+                      ? const Color(0xFFD7F0C8)
+                      : const Color(0xFFDCEBFA),
                 ),
-              ),
-            IgnorePointer(child: scene(_fgAsset)),
-            IgnorePointer(
-              child: ValueListenableBuilder<double>(
-                valueListenable: _elapsed,
-                builder: (context, t, _) => CustomPaint(
-                  painter: _SnowPainter(t: t, flakes: flakes),
+                scene(bg),
+                if (showRider)
+                  ValueListenableBuilder<double>(
+                    valueListenable: _elapsed,
+                    builder: (context, t, _) {
+                      // One rider: left to right, then she turns and comes back.
+                      final dist = (t * speed) % (span * 2);
+                      final goingRight = dist <= span;
+                      final along = goingRight ? dist : (span * 2 - dist);
+                      final left = along - riderW;
+                      final sprite = CustomPaint(
+                        painter: _WheelPainter(
+                          angle: t * speed / tyreR,
+                          summer: summer,
+                          shadow: true,
+                          spokes: true,
+                        ),
+                        child: rider,
+                      );
+                      return Positioned(
+                        left: left,
+                        bottom: bottom,
+                        width: riderW,
+                        height: riderH,
+                        child: goingRight
+                            ? sprite
+                            : Transform.flip(flipX: true, child: sprite),
+                      );
+                    },
+                  ),
+                IgnorePointer(child: scene(fg)),
+                IgnorePointer(
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _elapsed,
+                    builder: (context, t, _) => CustomPaint(
+                      painter: _SnowPainter(
+                        t: t,
+                        flakes: flakes,
+                        summer: summer,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            widget.child,
-          ],
+                widget.child,
+              ],
+            );
+          },
         );
       },
     );
   }
+
 }
 
 /// Road shadow and spokes behind the rider art. Spokes turn at speed / radius,
 /// so the wheels roll without slipping.
 class _WheelPainter extends CustomPainter {
-  const _WheelPainter({required this.angle});
+  const _WheelPainter({
+    required this.angle,
+    required this.summer,
+    required this.shadow,
+    required this.spokes,
+  });
 
   final double angle;
+  final bool summer;
+  final bool shadow;
+  final bool spokes;
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-    canvas.scale(size.width / _riderW, size.height / _riderH);
-
-    canvas.drawOval(
-      Rect.fromLTRB(20, _riderH - 14, _riderW - 20, _riderH + 10),
-      Paint()
-        ..color = const Color(0xFF3B5B85).withValues(alpha: 0.16)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+    canvas.scale(
+      size.width / (summer ? _summerRiderW : _winterRiderW),
+      size.height / (summer ? _summerRiderH : _winterRiderH),
     );
+
+    final artW = summer ? _summerRiderW : _winterRiderW;
+    final artH = summer ? _summerRiderH : _winterRiderH;
+    if (shadow) {
+      canvas.drawOval(
+        Rect.fromLTRB(30, artH - 18, artW - 30, artH + 12),
+        Paint()
+          ..color = (summer ? const Color(0xFF2E6B32) : const Color(0xFF3B5B85))
+              .withValues(alpha: 0.16)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+      );
+    }
+    if (!spokes) {
+      canvas.restore();
+      return;
+    }
 
     final spoke = Paint()
       ..color = const Color(0xFF8E9BB0)
-      ..strokeWidth = 2.6
+      ..strokeWidth = summer ? 2.2 : 2.6
       ..strokeCap = StrokeCap.round;
     const count = 18;
-    for (final hub in _wheelHubs) {
+    final hubs = summer ? _summerHubs : _wheelHubs;
+    final rim = summer ? _summerRim : _rimR;
+    final inner = summer ? 8.0 : 12.0;
+    for (final hub in hubs) {
       for (var i = 0; i < count; i++) {
         final a = angle + i * math.pi * 2 / count;
         canvas.drawLine(
-          hub + Offset(math.cos(a), math.sin(a)) * 12,
-          hub + Offset(math.cos(a), math.sin(a)) * _rimR,
+          hub + Offset(math.cos(a), math.sin(a)) * inner,
+          hub + Offset(math.cos(a), math.sin(a)) * rim,
           spoke,
         );
       }
-      canvas.drawCircle(hub, 12, Paint()..color = QrideBrand.accentDeep);
+      canvas.drawCircle(
+        hub,
+        summer ? 7 : 12,
+        Paint()..color = summer ? const Color(0xFF1E4F86) : QrideBrand.accentDeep,
+      );
     }
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _WheelPainter oldDelegate) =>
-      oldDelegate.angle != angle;
+      oldDelegate.angle != angle ||
+      oldDelegate.summer != summer ||
+      oldDelegate.spokes != spokes ||
+      oldDelegate.shadow != shadow;
 }
 
 class _Flake {
@@ -231,26 +310,57 @@ class _Flake {
 }
 
 class _SnowPainter extends CustomPainter {
-  const _SnowPainter({required this.t, required this.flakes});
+  const _SnowPainter({
+    required this.t,
+    required this.flakes,
+    required this.summer,
+  });
 
   final double t;
   final List<_Flake> flakes;
+  final bool summer;
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint();
     final span = size.height + 24;
-    for (final f in flakes) {
-      final y = (f.phase * span + t * f.fall) % span - 12;
-      final x =
-          f.x * size.width + math.sin(t * 0.9 + f.phase * math.pi * 2) * f.sway;
-      paint.color = Colors.white.withValues(alpha: 0.55 + f.size / 12);
-      canvas.drawCircle(Offset(x, y), f.size, paint);
+    if (!summer) {
+      for (final f in flakes) {
+        final y = (f.phase * span + t * f.fall) % span - 12;
+        final x = f.x * size.width +
+            math.sin(t * 0.9 + f.phase * math.pi * 2) * f.sway;
+        paint.color = Colors.white.withValues(alpha: 0.55 + f.size / 12);
+        canvas.drawCircle(Offset(x, y), f.size, paint);
+      }
+      return;
+    }
+    // Drifting leaves, not snow.
+    const colors = [
+      Color(0xFF7CB342),
+      Color(0xFF9CCC65),
+      Color(0xFFFFB300),
+      Color(0xFFEF6C00),
+    ];
+    for (var i = 0; i < flakes.length; i++) {
+      final f = flakes[i];
+      final y = (f.phase * span + t * f.fall * 0.28) % span - 12;
+      final x = f.x * size.width +
+          math.sin(t * 0.5 + f.phase * math.pi * 2) * f.sway;
+      paint.color = colors[i % colors.length].withValues(alpha: 0.8);
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(x, y),
+          width: f.size * 2.4,
+          height: f.size * 1.2,
+        ),
+        paint,
+      );
     }
   }
 
   @override
-  bool shouldRepaint(covariant _SnowPainter oldDelegate) => oldDelegate.t != t;
+  bool shouldRepaint(covariant _SnowPainter oldDelegate) =>
+      oldDelegate.t != t || oldDelegate.summer != summer;
 }
 
 /// Transparent app bar for auth screens drawn over [LoginSceneBackdrop].

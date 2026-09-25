@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -129,7 +130,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     ),
                                     Text(
-                                      'Sign in to continue riding',
+                                      kIsWeb
+                                          ? 'Sign in to manage the fleet'
+                                          : 'Sign in to continue riding',
                                       style: theme.textTheme.bodySmall?.copyWith(
                                         color: cs.onSurfaceVariant,
                                       ),
@@ -228,23 +231,40 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                             const SizedBox(height: 10),
-                            TextButton(
-                              onPressed: () => Navigator.of(context)
-                                  .pushNamed(RegisterScreen.routeName),
-                              child: const Text("Don't have an account? Register"),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.of(context)
-                                  .pushNamed(ForgotPasswordScreen.routeName),
-                              child: const Text('Forgot password?'),
-                            ),
+                            if (kIsWeb)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'Staff accounts are issued by the campus team.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: cs.onSurfaceVariant,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              )
+                            else ...[
+                              TextButton(
+                                onPressed: () => Navigator.of(context)
+                                    .pushNamed(RegisterScreen.routeName),
+                                child: const Text(
+                                  "Don't have an account? Register",
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(context)
+                                    .pushNamed(ForgotPasswordScreen.routeName),
+                                child: const Text('Forgot password?'),
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    const TermsFooterLink(),
-                    const SizedBox(height: 12),
+                    if (!kIsWeb) ...[
+                      const SizedBox(height: 20),
+                      const TermsFooterLink(),
+                      const SizedBox(height: 12),
+                    ],
                   ],
                 ),
               ),

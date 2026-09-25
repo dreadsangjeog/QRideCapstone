@@ -148,3 +148,80 @@ class AdminPageHeader extends StatelessWidget {
 EdgeInsets adminPagePadding(BuildContext context) => adminWide(context)
     ? const EdgeInsets.fromLTRB(28, 22, 28, 36)
     : const EdgeInsets.fromLTRB(16, 14, 16, 28);
+
+/// Compact A–Z / Newest control that sits on the same row as status filters.
+class AdminSortToggle extends StatelessWidget {
+  const AdminSortToggle({
+    super.key,
+    required this.newestFirst,
+    required this.onChanged,
+  });
+
+  final bool newestFirst;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Sort',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: cs.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 8),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHighest.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _segment(context, 'A–Z', !newestFirst, () => onChanged(false)),
+                _segment(context, 'Newest', newestFirst, () => onChanged(true)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _segment(
+    BuildContext context,
+    String label,
+    bool selected,
+    VoidCallback onTap,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? cs.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

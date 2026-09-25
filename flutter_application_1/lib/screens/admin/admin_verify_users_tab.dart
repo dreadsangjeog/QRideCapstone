@@ -23,6 +23,7 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
 
   /// null = all statuses
   String? _statusFilter = 'pending';
+  bool _newestFirst = false;
   late Future<List<KycPendingUser>> _future = _load();
 
   Future<List<KycPendingUser>> _load() {
@@ -96,7 +97,7 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                       },
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
-                        hintText: 'Search by username…',
+                        hintText: 'Search by name or username…',
                         filled: true,
                         fillColor: cs.surface.withValues(alpha: 0.9),
                         prefixIcon: const Icon(Icons.search_rounded),
@@ -135,29 +136,42 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        _FilterChip(
-                          label: 'Pending',
-                          selected: _statusFilter == 'pending',
-                          onTap: () => _setFilter('pending'),
+                        Expanded(
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _FilterChip(
+                                label: 'Pending',
+                                selected: _statusFilter == 'pending',
+                                onTap: () => _setFilter('pending'),
+                              ),
+                              _FilterChip(
+                                label: 'Verified',
+                                selected: _statusFilter == 'verified',
+                                onTap: () => _setFilter('verified'),
+                              ),
+                              _FilterChip(
+                                label: 'Rejected',
+                                selected: _statusFilter == 'rejected',
+                                onTap: () => _setFilter('rejected'),
+                              ),
+                              _FilterChip(
+                                label: 'All',
+                                selected: _statusFilter == null,
+                                onTap: () => _setFilter(null),
+                              ),
+                            ],
+                          ),
                         ),
-                        _FilterChip(
-                          label: 'Verified',
-                          selected: _statusFilter == 'verified',
-                          onTap: () => _setFilter('verified'),
-                        ),
-                        _FilterChip(
-                          label: 'Rejected',
-                          selected: _statusFilter == 'rejected',
-                          onTap: () => _setFilter('rejected'),
-                        ),
-                        _FilterChip(
-                          label: 'All',
-                          selected: _statusFilter == null,
-                          onTap: () => _setFilter(null),
+                        const SizedBox(width: 12),
+                        AdminSortToggle(
+                          newestFirst: _newestFirst,
+                          onChanged: (newest) =>
+                              setState(() => _newestFirst = newest),
                         ),
                       ],
                     ),
@@ -205,7 +219,22 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                           ],
                         );
                       }
-                      final rows = snap.data ?? [];
+                      final rows = [...snap.data ?? <KycPendingUser>[]];
+                      if (_newestFirst) {
+                        rows.sort((a, b) {
+                          final at = a.createdAt ??
+                              DateTime.fromMillisecondsSinceEpoch(0);
+                          final bt = b.createdAt ??
+                              DateTime.fromMillisecondsSinceEpoch(0);
+                          return bt.compareTo(at);
+                        });
+                      } else {
+                        rows.sort(
+                          (a, b) => a.displayName
+                              .toLowerCase()
+                              .compareTo(b.displayName.toLowerCase()),
+                        );
+                      }
                       if (rows.isEmpty) {
                         return ListView(
                           padding: const EdgeInsets.all(24),
@@ -217,7 +246,10 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                                   horizontal: 24,
                                   vertical: 36,
                                 ),
-                                child: Column(
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     Icon(
                                       Icons.badge_outlined,
@@ -245,6 +277,7 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                                       ),
                                     ),
                                   ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -351,11 +384,20 @@ class _UserRowCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        user.username,
+                        user.displayName,
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
                       ),
+                      if (user.legalName.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          user.username,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       Wrap(
                         spacing: 6,

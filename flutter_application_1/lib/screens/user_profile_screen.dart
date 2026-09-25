@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../theme/theme_controller.dart';
 import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
 import '../services/kyc_repository.dart';
@@ -11,9 +10,9 @@ import '../utils/auth_validators.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_generate_qr_screen.dart';
-import '../utils/logout_guard.dart';
 import 'legal/terms_screen.dart';
 import 'notification_settings_screen.dart';
+import 'user_account_settings_screen.dart';
 
 part 'user_profile_widgets.dart';
 
@@ -33,6 +32,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   final _firstName = TextEditingController();
   final _middleName = TextEditingController();
   final _lastName = TextEditingController();
+  final _birthdate = TextEditingController();
   KycProfile? _profile;
   bool _savingName = false;
 
@@ -62,6 +62,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       _firstName.text = profile.firstName ?? '';
       _middleName.text = profile.middleName ?? '';
       _lastName.text = profile.lastName ?? '';
+      _birthdate.text = (profile.birthdate ?? '').length >= 10
+          ? profile.birthdate!.substring(0, 10)
+          : (profile.birthdate ?? '');
       setState(() => _profile = profile);
     } catch (_) {}
   }
@@ -75,6 +78,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         firstName: _firstName.text,
         middleName: _middleName.text,
         lastName: _lastName.text,
+        birthdate: _birthdate.text,
       );
       if (!mounted) return;
       await _loadProfile();
@@ -98,6 +102,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _firstName.dispose();
     _middleName.dispose();
     _lastName.dispose();
+    _birthdate.dispose();
     super.dispose();
   }
 
@@ -241,6 +246,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 firstName: _firstName,
                 middleName: _middleName,
                 lastName: _lastName,
+                birthdate: _birthdate,
                 locked: _profile?.isVerified == true,
                 saving: _savingName,
                 onSave: _saveName,
@@ -312,45 +318,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           MaterialPageRoute<void>(
                             builder: (_) => const TermsScreen(),
                           ),
-                        );
-                      },
-                    ),
-                    Divider(
-                      height: 1,
-                      indent: 18,
-                      endIndent: 18,
-                      color: cs.outlineVariant.withValues(alpha: 0.45),
-                    ),
-                    ValueListenableBuilder<ThemeMode>(
-                      valueListenable: themeNotifier,
-                      builder: (context, mode, _) {
-                        final isDark = mode == ThemeMode.dark;
-                        return SwitchListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 2,
-                          ),
-                          secondary: Icon(
-                            isDark
-                                ? Icons.dark_mode_rounded
-                                : Icons.light_mode_rounded,
-                            color: cs.primary,
-                          ),
-                          title: const Text('Dark mode'),
-                          subtitle: Text(
-                            isDark ? 'Dark theme enabled' : 'Light theme active',
-                            style: TextStyle(
-                              color: cs.onSurfaceVariant,
-                              fontSize: 13,
-                            ),
-                          ),
-                          value: isDark,
-                          activeThumbColor: cs.primary,
-                          onChanged: (on) {
-                            setThemeMode(
-                              on ? ThemeMode.dark : ThemeMode.light,
-                            );
-                          },
                         );
                       },
                     ),
@@ -479,22 +446,26 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     horizontal: 18,
                     vertical: 8,
                   ),
-                  leading: Icon(Icons.logout_rounded, color: cs.error),
-                  title: Text(
-                    'Log out',
-                    style: TextStyle(
-                      color: cs.error,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                  leading: Icon(Icons.manage_accounts_outlined, color: cs.primary),
+                  title: const Text('Account settings'),
                   subtitle: Text(
-                    'Stay signed out on this device',
+                    'Appearance, delete account, and log out',
                     style: TextStyle(
                       color: cs.onSurfaceVariant,
                       fontSize: 13,
                     ),
                   ),
-                  onTap: () => confirmAndSignOut(context),
+                  trailing: Icon(
+                    Icons.chevron_right_rounded,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const UserAccountSettingsScreen(),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -511,6 +482,7 @@ class _LegalNameCard extends StatelessWidget {
     required this.firstName,
     required this.middleName,
     required this.lastName,
+    required this.birthdate,
     required this.locked,
     required this.saving,
     required this.onSave,
@@ -520,6 +492,7 @@ class _LegalNameCard extends StatelessWidget {
   final TextEditingController firstName;
   final TextEditingController middleName;
   final TextEditingController lastName;
+  final TextEditingController birthdate;
   final bool locked;
   final bool saving;
   final VoidCallback onSave;
@@ -577,6 +550,35 @@ class _LegalNameCard extends StatelessWidget {
                     decoration: const InputDecoration(labelText: 'Last name'),
                     validator: (v) =>
                         AuthValidators.legalName(v, label: 'Last name'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: birthdate,
+                    enabled: !locked && !saving,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Birthdate',
+                      prefixIcon: Icon(Icons.cake_outlined),
+                    ),
+                    validator: AuthValidators.birthdate,
+                    onTap: locked || saving
+                        ? null
+                        : () async {
+                            final now = DateTime.now();
+                            final initial = DateTime.tryParse(birthdate.text) ??
+                                DateTime(now.year - 18, now.month, now.day);
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: initial,
+                              firstDate: DateTime(1920),
+                              lastDate: DateTime(now.year, now.month, now.day)
+                                  .subtract(const Duration(days: 1)),
+                            );
+                            if (picked == null) return;
+                            final m = picked.month.toString().padLeft(2, '0');
+                            final d = picked.day.toString().padLeft(2, '0');
+                            birthdate.text = '${picked.year}-$m-$d';
+                          },
                   ),
                   if (!locked) ...[
                     const SizedBox(height: 14),

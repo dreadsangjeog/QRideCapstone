@@ -4,7 +4,6 @@ import '../theme/theme_controller.dart';
 import '../utils/account_management.dart';
 import '../utils/logout_guard.dart';
 import '../widgets/user_portal_chrome.dart';
-import 'notification_settings_screen.dart';
 
 /// Delete account, logout, theme, and notification preferences.
 class UserAccountSettingsScreen extends StatelessWidget {
@@ -19,40 +18,9 @@ class UserAccountSettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
         children: [
-          const PortalSectionLabel('Preferences'),
+          const PortalSectionLabel('Appearance'),
           PolishedSectionCard(
-            child: Column(
-              children: [
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 4,
-                  ),
-                  leading: Icon(Icons.notifications_outlined, color: cs.primary),
-                  title: const Text('Notification settings'),
-                  subtitle: Text(
-                    'Sound, vibration, and banners',
-                    style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
-                  ),
-                  trailing: Icon(
-                    Icons.chevron_right_rounded,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                  ),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const NotificationSettingsScreen(),
-                      ),
-                    );
-                  },
-                ),
-                Divider(
-                  height: 1,
-                  indent: 18,
-                  endIndent: 18,
-                  color: cs.outlineVariant.withValues(alpha: 0.45),
-                ),
-                ValueListenableBuilder<ThemeMode>(
+            child: ValueListenableBuilder<ThemeMode>(
                   valueListenable: themeNotifier,
                   builder: (context, mode, _) {
                     final isDark = mode == ThemeMode.dark;
@@ -83,8 +51,6 @@ class UserAccountSettingsScreen extends StatelessWidget {
                     );
                   },
                 ),
-              ],
-            ),
           ),
           const SizedBox(height: 24),
           const PortalSectionLabel('Account'),

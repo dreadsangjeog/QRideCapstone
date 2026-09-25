@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../theme/brand.dart';
+import '../theme/login_season.dart';
 import '../theme/theme_controller.dart';
 
 /// Layered wash behind admin chrome so liquid-glass panels have color to
@@ -125,43 +126,45 @@ class GlassPanel extends StatelessWidget {
 
     final plate = ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: rim, width: 1.1),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: fill,
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(color: rim, width: 1.1),
+                ),
+              ),
+            ),
           ),
-          child: Stack(
-            children: [
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                height: 28,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(radius),
-                      ),
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [shine, shine.withValues(alpha: 0)],
-                      ),
-                    ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 28,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(radius),
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [shine, shine.withValues(alpha: 0)],
                   ),
                 ),
               ),
-              Padding(
-                padding: padding ?? const EdgeInsets.fromLTRB(18, 16, 18, 14),
-                child: child,
-              ),
-            ],
+            ),
           ),
-        ),
+          Padding(
+            padding: padding ?? const EdgeInsets.fromLTRB(18, 16, 18, 14),
+            child: child,
+          ),
+        ],
       ),
     );
 
@@ -200,6 +203,42 @@ class GlassPanel extends StatelessWidget {
           child: plate,
         ),
       ),
+    );
+  }
+}
+
+/// Admin sets the login park for the website and the rider app together.
+class AdminSeasonToggle extends StatelessWidget {
+  const AdminSeasonToggle({super.key, required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<LoginSeason>(
+      valueListenable: loginSeason,
+      builder: (context, season, _) {
+        final summer = season == LoginSeason.summer;
+        return IconButton(
+          tooltip: summer ? 'Winter login scene' : 'Summer login scene',
+          onPressed: () async {
+            try {
+              await setLoginSeason(
+                summer ? LoginSeason.winter : LoginSeason.summer,
+              );
+            } catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Could not change the season. $e')),
+              );
+            }
+          },
+          icon: Icon(
+            summer ? Icons.ac_unit_rounded : Icons.wb_sunny_rounded,
+            color: color,
+          ),
+        );
+      },
     );
   }
 }

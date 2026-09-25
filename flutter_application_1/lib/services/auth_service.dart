@@ -146,6 +146,7 @@ class AuthService {
     required String firstName,
     String? middleName,
     required String lastName,
+    required String birthdate,
   }) async {
     final e = email.trim().toLowerCase();
     final u = username.trim().toLowerCase();
@@ -161,6 +162,7 @@ class AuthService {
               'first_name': firstName.trim(),
               'middle_name': (middleName ?? '').trim(),
               'last_name': lastName.trim(),
+              'birthdate': birthdate.trim(),
             },
           )
           .timeout(const Duration(seconds: 30));
@@ -204,6 +206,7 @@ class AuthService {
     required String firstName,
     String? middleName,
     required String lastName,
+    required String birthdate,
   }) async {
     await sendRegistrationOtp(
       email: email,
@@ -212,6 +215,7 @@ class AuthService {
       firstName: firstName,
       middleName: middleName,
       lastName: lastName,
+      birthdate: birthdate,
     );
   }
 
@@ -224,6 +228,7 @@ class AuthService {
     required String firstName,
     String? middleName,
     required String lastName,
+    required String birthdate,
   }) async {
     final e = email.trim().toLowerCase();
     final u = username.trim().toLowerCase();
@@ -239,6 +244,7 @@ class AuthService {
               'first_name': firstName.trim(),
               'middle_name': (middleName ?? '').trim(),
               'last_name': lastName.trim(),
+              'birthdate': birthdate.trim(),
             },
           )
           .timeout(const Duration(seconds: 30));
@@ -259,8 +265,10 @@ class AuthService {
   }
 
   static Future<void> signOut() async {
+    _roleUserId = null;
+    _roleFuture = null;
     await SupabaseClientProvider.client.auth.signOut(
-      scope: SignOutScope.global,
+      scope: SignOutScope.local,
     );
   }
 
@@ -308,9 +316,23 @@ class AuthService {
     return message.isEmpty ? 'Could not delete account' : message;
   }
 
-  static Future<bool> isAdmin() async {
+  static String? _roleUserId;
+  static Future<bool>? _roleFuture;
+
+  static Future<bool> isAdmin() {
     final uid = SupabaseClientProvider.client.auth.currentUser?.id;
-    if (uid == null) return false;
+    if (uid == null) {
+      _roleUserId = null;
+      _roleFuture = null;
+      return Future.value(false);
+    }
+    if (_roleUserId == uid && _roleFuture != null) return _roleFuture!;
+    _roleUserId = uid;
+    _roleFuture = _fetchIsAdmin(uid);
+    return _roleFuture!;
+  }
+
+  static Future<bool> _fetchIsAdmin(String uid) async {
     final row = await SupabaseClientProvider.client
         .from('profiles')
         .select('role')
