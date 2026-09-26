@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/ride_location_controller.dart';
 import '../theme/brand.dart';
 import '../widgets/user_portal_chrome.dart';
+import 'kyc/kyc_scope.dart';
 import 'legal/terms_screen.dart';
 import 'notifications_screen.dart';
 import 'user_account_settings_screen.dart';
@@ -53,6 +54,22 @@ class _UserRootShellState extends State<UserRootShell> {
   void _openDrawer() => _scaffoldKey.currentState?.openDrawer();
 
   Future<void> _openScan() async {
+    final kyc = KycScope.maybeOf(context);
+    if (kyc != null && !kyc.canUseFeatures) {
+      if (kyc.profile.needsAction) {
+        await kyc.openWizard(context);
+        return;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Staff are still checking your ID. You can look around, but you cannot rent yet.',
+          ),
+        ),
+      );
+      return;
+    }
     await Navigator.of(context).push(
       PageRouteBuilder<void>(
         pageBuilder: (context, animation, secondaryAnimation) =>
@@ -76,6 +93,23 @@ class _UserRootShellState extends State<UserRootShell> {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => const UserAccountSettingsScreen(),
+        ),
+      );
+      return;
+    }
+    if (value == 6) {
+      final kyc = KycScope.maybeOf(context);
+      if (kyc == null) return;
+      if (kyc.profile.needsAction) {
+        await kyc.openWizard(context);
+        return;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Staff are still checking your ID. You will get a notification when you are verified.',
+          ),
         ),
       );
       return;
@@ -122,6 +156,12 @@ class _UserRootShellState extends State<UserRootShell> {
                     top: MediaQuery.paddingOf(context).top + 6,
                     right: 12,
                     child: const _MapBell(),
+                  ),
+                  Positioned(
+                    top: MediaQuery.paddingOf(context).top + 62,
+                    left: 16,
+                    right: 16,
+                    child: const _KycLockBanner(),
                   ),
                   Align(
                     alignment: Alignment.bottomCenter,
@@ -305,7 +345,7 @@ class _RiderDrawer extends StatelessWidget {
             ),
             _DrawerItem(
               icon: Icons.directions_bike_rounded,
-              label: 'Active rental',
+              label: 'My rental',
               selected: currentIndex == 1,
               onTap: () => onPick(1),
             ),
@@ -315,6 +355,15 @@ class _RiderDrawer extends StatelessWidget {
               selected: false,
               onTap: () => onPick(4),
             ),
+            if (KycScope.maybeOf(context)?.canUseFeatures == false)
+              _DrawerItem(
+                icon: Icons.verified_user_outlined,
+                label: KycScope.of(context).profile.needsAction
+                    ? 'Verify ID'
+                    : 'Verification status',
+                selected: false,
+                onTap: () => onPick(6),
+              ),
             const Spacer(),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -382,6 +431,76 @@ class _DrawerItem extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _KycLockBanner extends StatelessWidget {
+  const _KycLockBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final kyc = KycScope.maybeOf(context);
+    if (kyc == null || kyc.canUseFeatures) return const SizedBox.shrink();
+    final p = kyc.profile;
+    final pending = p.isPending;
+    final title = pending
+        ? 'Waiting for staff'
+        : p.isRejected
+            ? 'Verification needs another try'
+            : 'Verify your ID to rent';
+    final body = pending
+        ? 'You can look around. Renting unlocks after staff approve your ID.'
+        : p.isRejected
+            ? (p.note?.trim().isNotEmpty == true
+                ? p.note!
+                : 'Photograph your ID again, then complete a new live selfie.')
+            : 'Scan and rent stay locked until your ID is verified.';
+    return Material(
+      color: Colors.black.withValues(alpha: 0.72),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: p.needsAction ? () => kyc.openWizard(context) : null,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Row(
+            children: [
+              Icon(
+                pending
+                    ? Icons.hourglass_top_rounded
+                    : Icons.verified_user_outlined,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      body,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.3,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (p.needsAction)
+                const Icon(Icons.chevron_right_rounded, color: Colors.white70),
+            ],
           ),
         ),
       ),

@@ -161,7 +161,13 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
             ),
             child: Row(
               children: [
-                Icon(Icons.attach_money_rounded, color: cs.primary, size: 18),
+                Text(
+                  '₱',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: cs.primary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const SizedBox(width: 6),
                 Text(
                   '₱${_rate.toStringAsFixed(0)} / hour',
@@ -217,7 +223,7 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Estimated total',
+                      'Rental charge',
                       style: theme.textTheme.labelMedium
                           ?.copyWith(color: cs.onSurfaceVariant),
                     ),
@@ -254,7 +260,8 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Overtime is charged at 1.5× rate. The admin must approve your request before the ride starts.',
+            'This charge is fixed for the time you pick. Returning early does not lower it. '
+            'Overtime is extra at 1.5×. The clock starts only after staff approve.',
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: cs.onSurfaceVariant),
           ),

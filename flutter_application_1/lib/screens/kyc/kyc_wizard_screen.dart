@@ -1,12 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../utils/account_management.dart';
+import '../../utils/auth_validators.dart';
 import '../../utils/logout_guard.dart';
+import '../../services/kyc_auto_match.dart';
 import '../../services/kyc_repository.dart';
 import '../../theme/brand.dart';
 import '../../widgets/user_portal_chrome.dart';
+import 'kyc_face_match_panel.dart';
+import 'kyc_id_capture_screen.dart';
 import 'kyc_liveness_screen.dart';
 
 class KycWizardScreen extends StatefulWidget {
@@ -26,23 +29,61 @@ class KycWizardScreen extends StatefulWidget {
 class _KycWizardScreenState extends State<KycWizardScreen> {
   final _repo = KycRepository();
   final _page = PageController();
+  final _nameForm = GlobalKey<FormState>();
+  final _firstName = TextEditingController();
+  final _middleName = TextEditingController();
+  final _lastName = TextEditingController();
+  final _birthdate = TextEditingController();
   int _step = 0;
 
   Uint8List? _idBytes;
   Uint8List? _selfieFrontBytes;
-  Uint8List? _selfieLeftBytes;
-  Uint8List? _selfieRightBytes;
   bool _busy = false;
   String? _error;
+  bool _nameLocked = false;
+  Future<KycAutoMatchResult>? _faceWork;
 
-  bool get _hasSelfies =>
-      _selfieFrontBytes != null &&
-      _selfieLeftBytes != null &&
-      _selfieRightBytes != null;
+  bool get _hasSelfies => _selfieFrontBytes != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadName();
+  }
+
+  Future<void> _loadName() async {
+    try {
+      final p = await _repo.fetchMine();
+      if (!mounted) return;
+      _firstName.text = p.firstName ?? '';
+      _middleName.text = p.middleName ?? '';
+      _lastName.text = p.lastName ?? '';
+      _birthdate.text = (p.birthdate ?? '').length >= 10
+          ? p.birthdate!.substring(0, 10)
+          : (p.birthdate ?? '');
+      setState(() => _nameLocked = p.personalDetailsLocked);
+    } catch (_) {}
+  }
+
+  Future<bool> _saveName() async {
+    if (_nameLocked) return true;
+    if (!(_nameForm.currentState?.validate() ?? false)) return false;
+    await _repo.updateLegalName(
+      firstName: _firstName.text,
+      middleName: _middleName.text,
+      lastName: _lastName.text,
+      birthdate: _birthdate.text,
+    );
+    return true;
+  }
 
   @override
   void dispose() {
     _page.dispose();
+    _firstName.dispose();
+    _middleName.dispose();
+    _lastName.dispose();
+    _birthdate.dispose();
     super.dispose();
   }
 
@@ -58,16 +99,22 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
     );
   }
 
-  Future<void> _pickId({required bool camera}) async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: camera ? ImageSource.camera : ImageSource.gallery,
-      preferredCameraDevice: CameraDevice.rear,
-      imageQuality: 88,
+  Future<void> _pickId() async {
+    if (kIsWeb) {
+      setState(() {
+        _error = 'ID capture works on the Android app, not in the browser.';
+      });
+      return;
+    }
+    final bytes = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(
+        builder: (_) => KycIdCaptureScreen(
+          firstName: _firstName.text,
+          lastName: _lastName.text,
+        ),
+      ),
     );
-    if (file == null) return;
-    final bytes = await file.readAsBytes();
-    if (!mounted) return;
+    if (bytes == null || !mounted) return;
     setState(() {
       _idBytes = bytes;
       _error = null;
@@ -86,16 +133,35 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
     );
     if (shots == null) return;
     final front = await shots.front.readAsBytes();
-    final left = await shots.left.readAsBytes();
-    final right = await shots.right.readAsBytes();
     if (!mounted) return;
     setState(() {
       _selfieFrontBytes = front;
-      _selfieLeftBytes = left;
-      _selfieRightBytes = right;
       _error = null;
     });
     await _goTo(3);
+  }
+
+  Future<void> _persistNameIfValid() async {
+    if (_nameLocked) return;
+    final firstBad = AuthValidators.legalName(
+      _firstName.text,
+      label: 'First name',
+    );
+    final lastBad = AuthValidators.legalName(
+      _lastName.text,
+      label: 'Last name',
+    );
+    if (firstBad != null || lastBad != null) return;
+    try {
+      await _repo.updateLegalName(
+        firstName: _firstName.text,
+        middleName: _middleName.text,
+        lastName: _lastName.text,
+        birthdate: AuthValidators.birthdate(_birthdate.text) == null
+            ? _birthdate.text
+            : null,
+      );
+    } catch (_) {}
   }
 
   Future<void> _submit() async {
@@ -108,19 +174,56 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
       _error = null;
     });
     try {
+      await _persistNameIfValid();
       await _repo.submit(
         idBytes: _idBytes!,
         selfieFrontBytes: _selfieFrontBytes!,
-        selfieLeftBytes: _selfieLeftBytes!,
-        selfieRightBytes: _selfieRightBytes!,
       );
+      final work = KycAutoMatch.reviewFaces(
+        idBytes: _idBytes!,
+        selfieBytes: _selfieFrontBytes!,
+      ).catchError(
+        (_) => const KycAutoMatchResult(
+          nameMatch: true,
+          photoMatch: false,
+          note:
+              'Could not compare the faces. Try the selfie again in better light.',
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _faceWork = work);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<void> _onFaceFinished(KycAutoMatchResult match) async {
+    try {
+      if (match.photoMatch) {
+        await _repo.holdForStaffReview(
+          note:
+              'Name and face passed the app check. Waiting for staff to verify.',
+        );
+      } else {
+        await _repo.applyAutoReview(
+          nameMatch: true,
+          photoMatch: false,
+          note: match.note,
+        );
+      }
       if (!mounted) return;
       widget.onSubmitted?.call();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      setState(() {
+        _faceWork = null;
+        _busy = false;
+        _error = match.photoMatch ? e.toString() : match.note;
+      });
     }
   }
 
@@ -141,7 +244,9 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
+        children: [
+          Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
@@ -163,23 +268,36 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 _IntroPage(
-                  onContinue: () => _goTo(1),
+                  formKey: _nameForm,
+                  firstName: _firstName,
+                  middleName: _middleName,
+                  lastName: _lastName,
+                  birthdate: _birthdate,
+                  nameLocked: _nameLocked,
+                  error: _error,
+                  onContinue: () async {
+                    try {
+                      if (!await _saveName()) return;
+                      if (mounted) await _goTo(1);
+                    } catch (e) {
+                      if (mounted) {
+                        setState(() => _error = e.toString());
+                      }
+                    }
+                  },
                   onLogout: () => confirmAndSignOut(context),
                   onDeleteAccount: () => confirmAndDeleteAccount(context),
                 ),
                 _IdPage(
                   bytes: _idBytes,
                   busy: _busy,
-                  onCamera: () => _pickId(camera: true),
-                  onGallery: () => _pickId(camera: false),
+                  onCamera: _pickId,
                   onNext: _idBytes == null ? null : () => _goTo(2),
                   onBack: () => _goTo(0),
                 ),
                 _SelfiePage(
                   hasSelfies: _hasSelfies,
                   front: _selfieFrontBytes,
-                  left: _selfieLeftBytes,
-                  right: _selfieRightBytes,
                   busy: _busy,
                   onStart: _takeSelfie,
                   onNext: _hasSelfies ? () => _goTo(3) : null,
@@ -188,8 +306,6 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
                 _ReviewPage(
                   idBytes: _idBytes,
                   front: _selfieFrontBytes,
-                  left: _selfieLeftBytes,
-                  right: _selfieRightBytes,
                   busy: _busy,
                   error: _error,
                   onSubmit: _submit,
@@ -198,6 +314,19 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
               ],
             ),
           ),
+        ],
+          ),
+          if (_faceWork != null &&
+              _idBytes != null &&
+              _selfieFrontBytes != null)
+            Positioned.fill(
+              child: KycFaceMatchPanel(
+                idPhoto: _idBytes!,
+                selfie: _selfieFrontBytes!,
+                work: _faceWork!,
+                onFinished: _onFaceFinished,
+              ),
+            ),
         ],
       ),
     );
@@ -211,7 +340,7 @@ class _StepHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const labels = ['Why', 'ID', 'Selfie', 'Review'];
+    const labels = ['Name', 'ID', 'Selfie', 'Review'];
     return Row(
       children: [
         for (var i = 0; i < labels.length; i++) ...[
@@ -291,11 +420,25 @@ class _Dot extends StatelessWidget {
 
 class _IntroPage extends StatelessWidget {
   const _IntroPage({
+    required this.formKey,
+    required this.firstName,
+    required this.middleName,
+    required this.lastName,
+    required this.birthdate,
+    required this.nameLocked,
+    this.error,
     required this.onContinue,
     required this.onLogout,
     required this.onDeleteAccount,
   });
 
+  final GlobalKey<FormState> formKey;
+  final TextEditingController firstName;
+  final TextEditingController middleName;
+  final TextEditingController lastName;
+  final TextEditingController birthdate;
+  final bool nameLocked;
+  final String? error;
   final VoidCallback onContinue;
   final VoidCallback onLogout;
   final VoidCallback onDeleteAccount;
@@ -322,24 +465,107 @@ class _IntroPage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
+        Form(
+          key: formKey,
+          child: Column(
+            children: [
+              if (nameLocked) ...[
+                Text(
+                  'Your name and birthdate are locked because they already matched the ID.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              TextFormField(
+                controller: firstName,
+                enabled: !nameLocked,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'First name'),
+                validator: (v) => AuthValidators.legalName(v, label: 'First name'),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: middleName,
+                enabled: !nameLocked,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Middle name (optional)',
+                ),
+                validator: (v) => AuthValidators.legalName(
+                  v,
+                  label: 'Middle name',
+                  required: false,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: lastName,
+                enabled: !nameLocked,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Last name'),
+                validator: (v) => AuthValidators.legalName(v, label: 'Last name'),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: birthdate,
+                enabled: !nameLocked,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Birthdate',
+                  suffixIcon: Icon(Icons.calendar_today_rounded),
+                ),
+                validator: AuthValidators.birthdate,
+                onTap: nameLocked
+                    ? null
+                    : () async {
+                  final initial = DateTime.tryParse(birthdate.text) ??
+                      DateTime(2004, 1, 1);
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: initial,
+                    firstDate: DateTime(1920),
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked == null) return;
+                  final m = picked.month.toString().padLeft(2, '0');
+                  final d = picked.day.toString().padLeft(2, '0');
+                  birthdate.text = '${picked.year}-$m-$d';
+                },
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          nameLocked
+              ? 'These details already matched your ID. Only staff can change them after review.'
+              : 'Type first and last name as they appear on the ID. Birthdate is saved on your account but is not used to match the ID.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 20),
         const _InfoTile(
           icon: Icons.badge_outlined,
           title: 'Photo of your ID',
-          body: 'School or government ID. Use the camera so the text is readable.',
+          body:
+              'Line the card up in the frame. Use horizontal or vertical to match a government or student ID.',
         ),
         const SizedBox(height: 10),
         const _InfoTile(
           icon: Icons.face_retouching_natural_outlined,
           title: 'Live face check',
           body:
-              'Blink, then turn your head left and right. A printed photo or screenshot will not pass.',
+              'Blink, then turn your head when asked. A printed photo or another screen will not pass.',
         ),
         const SizedBox(height: 10),
         const _InfoTile(
           icon: Icons.verified_user_outlined,
-          title: 'Admin review',
+          title: 'Automatic check',
           body:
-              'Staff confirm your ID matches the live selfies. You can rent after you are approved.',
+              'QRide matches first name and last name separately to the ID. Birthdate is not used, so student IDs are fine.',
         ),
         const SizedBox(height: 16),
         const _Notice(
@@ -349,6 +575,15 @@ class _IntroPage extends StatelessWidget {
           body:
               'ID and selfies are stored securely and used only for rider verification — not for ads or sharing.',
         ),
+        if (error != null && error!.trim().isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            error!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
         const SizedBox(height: 24),
         FilledButton(
           onPressed: onContinue,
@@ -373,7 +608,6 @@ class _IdPage extends StatelessWidget {
     required this.bytes,
     required this.busy,
     required this.onCamera,
-    required this.onGallery,
     required this.onNext,
     required this.onBack,
   });
@@ -381,7 +615,6 @@ class _IdPage extends StatelessWidget {
   final Uint8List? bytes;
   final bool busy;
   final VoidCallback onCamera;
-  final VoidCallback onGallery;
   final VoidCallback? onNext;
   final VoidCallback onBack;
 
@@ -400,7 +633,7 @@ class _IdPage extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          'Place the card on a flat surface. Avoid glare. All four corners should be visible.',
+          'Place a school or government ID in the frame. Edges do not need to be perfect — as long as the printed face and name are readable.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: cs.onSurfaceVariant,
             height: 1.4,
@@ -455,13 +688,8 @@ class _IdPage extends StatelessWidget {
         const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: busy ? null : onCamera,
-          icon: const Icon(Icons.photo_camera_outlined),
-          label: Text(bytes == null ? 'Open camera' : 'Retake with camera'),
-        ),
-        const SizedBox(height: 8),
-        TextButton(
-          onPressed: busy ? null : onGallery,
-          child: const Text('Use a photo already on this phone'),
+          icon: const Icon(Icons.crop_free_rounded),
+          label: Text(bytes == null ? 'Align ID in frame' : 'Retake ID photo'),
         ),
         const SizedBox(height: 20),
         Row(
@@ -491,8 +719,6 @@ class _SelfiePage extends StatelessWidget {
   const _SelfiePage({
     required this.hasSelfies,
     required this.front,
-    required this.left,
-    required this.right,
     required this.busy,
     required this.onStart,
     required this.onNext,
@@ -501,8 +727,6 @@ class _SelfiePage extends StatelessWidget {
 
   final bool hasSelfies;
   final Uint8List? front;
-  final Uint8List? left;
-  final Uint8List? right;
   final bool busy;
   final VoidCallback onStart;
   final VoidCallback? onNext;
@@ -532,32 +756,24 @@ class _SelfiePage extends StatelessWidget {
         const SizedBox(height: 16),
         const _InfoTile(
           icon: Icons.visibility_outlined,
-          title: '1. Face the camera and blink',
-          body: 'Front selfie is taken right after the blink.',
+          title: '1. Blink once',
+          body: 'Eyes must close and open. A printed photo cannot do that.',
         ),
         const SizedBox(height: 10),
         const _InfoTile(
-          icon: Icons.rotate_left_rounded,
-          title: '2. Turn your head left',
-          body: 'We watch the head move. A still picture will not pass.',
+          icon: Icons.rotate_90_degrees_ccw_rounded,
+          title: '2. Turn when asked',
+          body: 'Left or right, chosen at random. We watch the head move.',
         ),
         const SizedBox(height: 10),
         const _InfoTile(
-          icon: Icons.rotate_right_rounded,
-          title: '3. Turn your head right',
-          body: 'Same check the other way, then you are done.',
+          icon: Icons.photo_camera_outlined,
+          title: '3. One live photo',
+          body: 'Look back at the camera. That selfie is matched to your ID.',
         ),
-        if (hasSelfies) ...[
+        if (hasSelfies && front != null) ...[
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(child: _ShotThumb(bytes: front!, label: 'Front')),
-              const SizedBox(width: 8),
-              Expanded(child: _ShotThumb(bytes: left!, label: 'Left')),
-              const SizedBox(width: 8),
-              Expanded(child: _ShotThumb(bytes: right!, label: 'Right')),
-            ],
-          ),
+          _ShotThumb(bytes: front!, label: 'Live selfie'),
         ],
         const SizedBox(height: 20),
         FilledButton.icon(
@@ -593,8 +809,6 @@ class _ReviewPage extends StatelessWidget {
   const _ReviewPage({
     required this.idBytes,
     required this.front,
-    required this.left,
-    required this.right,
     required this.busy,
     required this.error,
     required this.onSubmit,
@@ -603,8 +817,6 @@ class _ReviewPage extends StatelessWidget {
 
   final Uint8List? idBytes;
   final Uint8List? front;
-  final Uint8List? left;
-  final Uint8List? right;
   final bool busy;
   final String? error;
   final VoidCallback onSubmit;
@@ -613,7 +825,7 @@ class _ReviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final ready = idBytes != null && front != null && left != null && right != null;
+    final ready = idBytes != null && front != null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
       children: [
@@ -625,7 +837,7 @@ class _ReviewPage extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          'Make sure the ID is readable and the selfies are clearly you. An admin will compare them.',
+          'Your name already matched the ID. This step checks the face. If it matches, staff do the final verification.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
             height: 1.4,
@@ -656,15 +868,7 @@ class _ReviewPage extends StatelessWidget {
           ),
         if (front != null) ...[
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _ShotThumb(bytes: front!, label: 'Front')),
-              const SizedBox(width: 8),
-              Expanded(child: _ShotThumb(bytes: left!, label: 'Left')),
-              const SizedBox(width: 8),
-              Expanded(child: _ShotThumb(bytes: right!, label: 'Right')),
-            ],
-          ),
+          _ShotThumb(bytes: front!, label: 'Live selfie'),
         ],
         if (error != null) ...[
           const SizedBox(height: 14),
@@ -682,7 +886,7 @@ class _ReviewPage extends StatelessWidget {
                     color: Colors.white,
                   ),
                 )
-              : const Text('Submit for review'),
+              : const Text('Match faces and verify'),
         ),
         const SizedBox(height: 8),
         OutlinedButton(

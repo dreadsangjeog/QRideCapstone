@@ -106,7 +106,9 @@ Future<void> confirmAndDeleteAccount(BuildContext context) async {
 
   try {
     await AuthService.deleteMyAccount();
-    if (context.mounted) Navigator.of(context).pop();
+    if (!context.mounted) return;
+    Navigator.of(context).pop();
+    Navigator.of(context).popUntil((route) => route.isFirst);
   } catch (e) {
     if (!context.mounted) return;
     Navigator.of(context).pop();

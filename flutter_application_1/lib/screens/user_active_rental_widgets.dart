@@ -452,8 +452,8 @@ class _CostRow extends StatelessWidget {
   }
 }
 
-class _ExtendTimeSheet extends StatefulWidget {
-  const _ExtendTimeSheet({
+class ExtendTimeSheet extends StatefulWidget {
+  const ExtendTimeSheet({
     required this.currentPlannedMinutes,
     required this.ratePerHour,
   });
@@ -462,10 +462,10 @@ class _ExtendTimeSheet extends StatefulWidget {
   final double ratePerHour;
 
   @override
-  State<_ExtendTimeSheet> createState() => _ExtendTimeSheetState();
+  State<ExtendTimeSheet> createState() => _ExtendTimeSheetState();
 }
 
-class _ExtendTimeSheetState extends State<_ExtendTimeSheet> {
+class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
   static const _presets = [
     (label: '15 min', minutes: 15),
     (label: '30 min', minutes: 30),

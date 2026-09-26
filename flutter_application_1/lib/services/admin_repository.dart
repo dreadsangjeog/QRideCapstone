@@ -152,6 +152,14 @@ class AdminRepository {
     return (rows as List<dynamic>).length;
   }
 
+  Future<int> countActiveRentals() async {
+    final rows = await SupabaseClientProvider.client
+        .from('rentals')
+        .select('id')
+        .eq('status', 'active');
+    return (rows as List<dynamic>).length;
+  }
+
   /// Approves a pending rental — the user's countdown starts from this moment.
   Future<void> approveRental(String rentalId) async {
     await SupabaseClientProvider.client.rpc(

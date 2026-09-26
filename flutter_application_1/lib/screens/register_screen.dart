@@ -209,15 +209,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         lastName: _lastName.text,
         birthdate: _birthdate.text,
       );
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Account created. Sign in, then upload your ID and complete a live selfie before you can rent.',
-          ),
-        ),
+      await AuthService.signInWithUsernamePassword(
+        username: _username.text,
+        password: _password.text,
       );
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       if (!mounted) return;
       final raw = e.toString();
@@ -404,7 +401,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                             ] else ...[
                               Text(
-                                'Enter the 6-digit code sent to ${_email.text.trim()}.',
+                                'Enter the 6-digit code sent to ${_email.text.trim()}. After this you will sign in and verify your ID.',
                                 style: theme.textTheme.bodyMedium?.copyWith(
                                   color: cs.onSurfaceVariant,
                                   height: 1.35,
@@ -454,7 +451,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     )
                                   : Text(
                                       _codeSent
-                                          ? 'Create account'
+                                          ? 'Verify code'
                                           : 'Continue',
                                     ),
                             ),

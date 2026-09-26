@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -23,7 +25,8 @@ class UserScanScreen extends StatefulWidget {
   State<UserScanScreen> createState() => _UserScanScreenState();
 }
 
-class _UserScanScreenState extends State<UserScanScreen> {
+class _UserScanScreenState extends State<UserScanScreen>
+    with WidgetsBindingObserver {
   final _adminRepo = AdminRepository();
   final _rentalRepo = RentalRepository();
 
@@ -32,10 +35,14 @@ class _UserScanScreenState extends State<UserScanScreen> {
   bool _openingCamera = true;
   bool _busy = false;
   bool _processingFrame = false;
+  bool _waitingLocationReturn = false;
+  Bike? _pendingBike;
+  String? _locationHoldMessage;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _requestCameraAndOpenScanner();
@@ -44,8 +51,16 @@ class _UserScanScreenState extends State<UserScanScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scannerController?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _waitingLocationReturn) {
+      unawaited(_resumeAfterLocationSettings());
+    }
   }
 
   MobileScannerController _ensureController() {
@@ -130,11 +145,63 @@ class _UserScanScreenState extends State<UserScanScreen> {
       return;
     }
 
+    await _openScannerAfterLocation();
+  }
+
+  Future<void> _openScannerAfterLocation() async {
+    final result = await ensureLocationAccessForRental(context);
+    if (!mounted) return;
+    if (result == LocationAccessResult.granted) {
+      _waitingLocationReturn = false;
+      _locationHoldMessage = null;
+      setState(() {
+        _ensureController();
+        _scannerVisible = true;
+        _openingCamera = false;
+        _processingFrame = false;
+      });
+      return;
+    }
+    if (result == LocationAccessResult.awaitingPhone) {
+      _waitingLocationReturn = true;
+      setState(() {
+        _openingCamera = false;
+        _locationHoldMessage =
+            'Stay on this screen. Turn on location, then return here. The scanner stays open.';
+      });
+      return;
+    }
     setState(() {
-      _ensureController();
-      _scannerVisible = true;
       _openingCamera = false;
-      _processingFrame = false;
+      _locationHoldMessage =
+          'Allow location while using QRide so you can scan a bike. You will stay on this screen.';
+    });
+  }
+
+  Future<void> _resumeAfterLocationSettings() async {
+    if (await hasLocationAccessForRental()) {
+      _waitingLocationReturn = false;
+      _locationHoldMessage = null;
+      if (!mounted) return;
+      final pending = _pendingBike;
+      if (!_scannerVisible) {
+        setState(() {
+          _ensureController();
+          _scannerVisible = true;
+          _openingCamera = false;
+          _processingFrame = false;
+        });
+      }
+      if (pending != null) {
+        _pendingBike = null;
+        await _startRentalIfAvailable(pending);
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _locationHoldMessage =
+          'Location is still off. Allow it for QRide, then return here.';
     });
   }
 
@@ -220,7 +287,7 @@ class _UserScanScreenState extends State<UserScanScreen> {
         SnackBar(
           content: Text(
             kyc.isPending
-                ? 'Your ID is still under review. You can rent after an admin verifies you.'
+                ? 'Your ID is still being checked. You can rent after you are verified.'
                 : 'Verify your ID and live selfie before renting a bike.',
           ),
         ),
@@ -232,7 +299,27 @@ class _UserScanScreenState extends State<UserScanScreen> {
     // 1. Location service + app permission required (scan and manual code).
     if (!mounted) return;
     final locationOk = await ensureLocationAccessForRental(context);
-    if (!locationOk) {
+    if (locationOk == LocationAccessResult.awaitingPhone) {
+      _pendingBike = bike;
+      _waitingLocationReturn = true;
+      if (mounted) {
+        setState(() {
+          _locationHoldMessage =
+              'Stay on this screen. Allow location, then return here. Your bike stays selected.';
+        });
+      }
+      return;
+    }
+    if (locationOk != LocationAccessResult.granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Allow location while using QRide to send a rental request.',
+            ),
+          ),
+        );
+      }
       await _restartScannerIfNeeded();
       return;
     }
@@ -248,7 +335,12 @@ class _UserScanScreenState extends State<UserScanScreen> {
     if (!await hasLocationAccessForRental()) {
       if (!mounted) return;
       final stillOk = await ensureLocationAccessForRental(context);
-      if (!stillOk) {
+      if (stillOk == LocationAccessResult.awaitingPhone) {
+        _pendingBike = bike;
+        _waitingLocationReturn = true;
+        return;
+      }
+      if (stillOk != LocationAccessResult.granted) {
         await _restartScannerIfNeeded();
         return;
       }
@@ -636,7 +728,11 @@ class _UserScanScreenState extends State<UserScanScreen> {
                   const QrideBikeMark(size: 84),
                   const SizedBox(height: 16),
                   Text(
-                    'Camera needs access',
+                    _waitingLocationReturn
+                        ? 'Stay on this screen'
+                        : (_locationHoldMessage != null
+                            ? 'Location is required'
+                            : 'Camera needs access'),
                     textAlign: TextAlign.center,
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w800,
@@ -645,7 +741,8 @@ class _UserScanScreenState extends State<UserScanScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Allow the camera to scan a bike QR, or type the code printed on the bike.',
+                    _locationHoldMessage ??
+                        'Allow the camera to scan a bike QR, or type the code printed on the bike.',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: cs.onSurfaceVariant,
@@ -658,9 +755,23 @@ class _UserScanScreenState extends State<UserScanScreen> {
           ),
           const SizedBox(height: 18),
           FilledButton.icon(
-            onPressed: (kIsWeb || _busy) ? null : _requestCameraAndOpenScanner,
-            icon: const Icon(Icons.photo_camera_rounded),
-            label: Text(kIsWeb ? 'Camera (mobile only)' : 'Try camera again'),
+            onPressed: (kIsWeb || _busy)
+                ? null
+                : (_waitingLocationReturn
+                    ? _resumeAfterLocationSettings
+                    : _requestCameraAndOpenScanner),
+            icon: Icon(
+              _waitingLocationReturn
+                  ? Icons.my_location_rounded
+                  : Icons.photo_camera_rounded,
+            ),
+            label: Text(
+              kIsWeb
+                  ? 'Camera (mobile only)'
+                  : (_waitingLocationReturn
+                      ? 'I allowed location'
+                      : 'Try camera again'),
+            ),
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(

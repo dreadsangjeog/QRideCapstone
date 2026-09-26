@@ -179,8 +179,9 @@ class _BikesTabState extends State<_BikesTab> {
 }
 
 class _ActiveRentalsTab extends StatefulWidget {
-  const _ActiveRentalsTab({required this.repo});
+  const _ActiveRentalsTab({required this.repo, this.changes});
   final AdminRepository repo;
+  final Listenable? changes;
 
   @override
   State<_ActiveRentalsTab> createState() => _ActiveRentalsTabState();
@@ -188,6 +189,34 @@ class _ActiveRentalsTab extends StatefulWidget {
 
 class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
   late Future<List<RentalWithBike>> _future = widget.repo.fetchActiveRentalsWithBikes();
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.changes?.addListener(_onLive);
+    _poll = Timer.periodic(const Duration(seconds: 10), (_) => _onLive());
+  }
+
+  @override
+  void didUpdateWidget(covariant _ActiveRentalsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.changes != widget.changes) {
+      oldWidget.changes?.removeListener(_onLive);
+      widget.changes?.addListener(_onLive);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.changes?.removeListener(_onLive);
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  void _onLive() {
+    if (mounted) unawaited(_refresh());
+  }
 
   Future<void> _refresh() async {
     setState(() {
@@ -217,7 +246,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
             Text('Rider: ${row.riderDisplay}'),
             Text('Bike: ${row.bikeDisplay}'),
             const SizedBox(height: 10),
-            Text('Base cost:  ₱${baseCost.toStringAsFixed(2)}'),
+            Text('Rental charge:  ₱${baseCost.toStringAsFixed(2)}'),
             if (penalty > 0)
               Text(
                 'Penalty fee: ₱${penalty.toStringAsFixed(2)} '

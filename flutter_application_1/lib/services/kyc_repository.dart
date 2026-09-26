@@ -36,6 +36,9 @@ class KycProfile {
   bool get isPending => status == 'pending';
   bool get isRejected => status == 'rejected';
   bool get needsAction => status == 'unverified' || status == 'rejected';
+
+  /// Name and birthdate freeze after the AI ID check.
+  bool get personalDetailsLocked => status != 'unverified';
 }
 
 class KycPendingUser {
@@ -151,8 +154,10 @@ class KycRepository {
     final uid = SupabaseClientProvider.client.auth.currentUser?.id;
     if (uid == null) throw StateError('Not signed in');
     final current = await fetchMine();
-    if (current.isVerified) {
-      throw StateError('Your name is locked after ID verification.');
+    if (current.personalDetailsLocked) {
+      throw StateError(
+        'Your name and birthdate are locked after the ID check.',
+      );
     }
     await SupabaseClientProvider.client.from('profiles').update({
       'first_name': firstName.trim(),
@@ -167,16 +172,12 @@ class KycRepository {
   Future<void> submit({
     required Uint8List idBytes,
     required Uint8List selfieFrontBytes,
-    required Uint8List selfieLeftBytes,
-    required Uint8List selfieRightBytes,
   }) async {
     final uid = SupabaseClientProvider.client.auth.currentUser?.id;
     if (uid == null) throw StateError('Not signed in');
 
     final idPath = '$uid/id.jpg';
     final selfiePath = '$uid/selfie.jpg';
-    final leftPath = '$uid/selfie_left.jpg';
-    final rightPath = '$uid/selfie_right.jpg';
     final storage = SupabaseClientProvider.client.storage.from(bucket);
 
     Future<void> put(String path, Uint8List bytes) {
@@ -192,14 +193,10 @@ class KycRepository {
 
     await put(idPath, idBytes);
     await put(selfiePath, selfieFrontBytes);
-    await put(leftPath, selfieLeftBytes);
-    await put(rightPath, selfieRightBytes);
 
     final payload = {
       'id_image_path': idPath,
       'selfie_image_path': selfiePath,
-      'selfie_left_image_path': leftPath,
-      'selfie_right_image_path': rightPath,
       'liveness_passed_at': DateTime.now().toUtc().toIso8601String(),
       'verification_status': 'pending',
       'verification_note': null,
@@ -224,6 +221,34 @@ class KycRepository {
           .update(payload)
           .eq('id', uid);
     }
+  }
+
+  /// AI passed. Stay pending so staff make the final decision.
+  Future<void> holdForStaffReview({required String note}) async {
+    final uid = SupabaseClientProvider.client.auth.currentUser?.id;
+    if (uid == null) throw StateError('Not signed in');
+    await SupabaseClientProvider.client.from('profiles').update({
+      'verification_status': 'pending',
+      'verification_note': note.trim().isEmpty
+          ? 'Name and face passed the app check. Waiting for staff to verify.'
+          : note.trim(),
+    }).eq('id', uid);
+  }
+
+  Future<String> applyAutoReview({
+    required bool nameMatch,
+    required bool photoMatch,
+    required String note,
+  }) async {
+    final raw = await SupabaseClientProvider.client.rpc(
+      'kyc_apply_auto_review',
+      params: {
+        'p_name_ok': nameMatch,
+        'p_photo_ok': photoMatch,
+        'p_note': note,
+      },
+    );
+    return raw?.toString() ?? 'rejected';
   }
 
   Future<List<KycPendingUser>> searchUsers({

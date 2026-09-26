@@ -12,18 +12,12 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'kyc_liveness_overlay.dart';
 
 class KycLivenessShots {
-  const KycLivenessShots({
-    required this.front,
-    required this.left,
-    required this.right,
-  });
+  const KycLivenessShots({required this.front});
 
   final File front;
-  final File left;
-  final File right;
 }
 
-enum _Pose { front, left, right }
+enum _Pose { front, turn, center }
 
 /// Stage inside the current pose.
 enum _Stage { fit, steady, blink, snap }
@@ -101,8 +95,7 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
   final List<_Sample> _samples = [];
 
   File? _front;
-  File? _left;
-  File? _right;
+  final bool _turnLeft = math.Random().nextBool();
   String? _justTook;
   bool _sceneDark = false;
   bool _briefing = true;
@@ -283,11 +276,12 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
     }
     switch (_pose) {
       case _Pose.front:
+      case _Pose.center:
         if (yaw.abs() > 22) return _Fit.needTurn;
-      case _Pose.left:
-        if (yaw < _turnDeg) return _Fit.needTurn;
-      case _Pose.right:
-        if (yaw > -_turnDeg) return _Fit.needTurn;
+      case _Pose.turn:
+        if (_turnLeft ? yaw < _turnDeg : yaw > -_turnDeg) {
+          return _Fit.needTurn;
+        }
     }
     return _Fit.good;
   }
@@ -326,7 +320,7 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
 
   void _resetTurnMotion() {
     _yawSweep.clear();
-    _turnMotionOk = _pose == _Pose.front;
+    _turnMotionOk = _pose != _Pose.turn;
   }
 
   void _resetLivenessForPose() {
@@ -341,8 +335,11 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
   /// Left/right: pass only if the head *moves* from that baseline to the side.
   /// A printed photo already looking left/right never sweeps, so it fails.
   void _noteYawMotion(double yaw) {
-    if (_pose == _Pose.front) {
-      _baselineYaw = _baselineYaw == null ? yaw : (_baselineYaw! * 0.7 + yaw * 0.3);
+    if (_pose != _Pose.turn) {
+      if (_pose == _Pose.front) {
+        _baselineYaw =
+            _baselineYaw == null ? yaw : (_baselineYaw! * 0.7 + yaw * 0.3);
+      }
       _turnMotionOk = true;
       return;
     }
@@ -356,11 +353,11 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
 
     var towardTarget = 0;
     for (final y in _yawSweep) {
-      if (_pose == _Pose.left && y > start + 4) towardTarget++;
-      if (_pose == _Pose.right && y < start - 4) towardTarget++;
+      if (_turnLeft && y > start + 4) towardTarget++;
+      if (!_turnLeft && y < start - 4) towardTarget++;
     }
 
-    if (_pose == _Pose.left) {
+    if (_turnLeft) {
       final peak = _yawSweep.reduce(math.max);
       _turnMotionOk = towardTarget >= 4 &&
           (peak - start) >= _turnSweep &&
@@ -430,7 +427,7 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
     _trackingOk(face);
 
     var fit = _classify(face, frame, yaw);
-    if (fit == _Fit.good && !_turnMotionOk && _pose != _Pose.front) {
+    if (fit == _Fit.good && !_turnMotionOk && _pose == _Pose.turn) {
       fit = _Fit.needTurn;
     }
     _setFit(fit);
@@ -459,6 +456,14 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
             HapticFeedback.selectionClick();
             _resetBlink();
             setState(() => _stage = _Stage.blink);
+          } else if (_pose == _Pose.turn) {
+            HapticFeedback.selectionClick();
+            setState(() {
+              _pose = _Pose.center;
+              _stage = _Stage.fit;
+              _fit = _Fit.needTurn;
+            });
+            _resetLivenessForPose();
           } else {
             _capture();
           }
@@ -507,7 +512,12 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
           yaw.abs() < 28 &&
           swing >= _minEyeSwing) {
         HapticFeedback.mediumImpact();
-        _capture();
+        setState(() {
+          _pose = _Pose.turn;
+          _stage = _Stage.fit;
+          _fit = _Fit.needTurn;
+        });
+        _resetLivenessForPose();
       }
     } else if (openness < 0.48) {
       _closedFrames++;
@@ -522,7 +532,6 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
     _snapping = true;
     _samples.clear();
     _resetHold();
-    final pose = _pose;
     setState(() {
       _stage = _Stage.snap;
       _flash = true;
@@ -532,44 +541,18 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
       // Let auto-focus/exposure settle so the still is not blurry.
       await Future<void>.delayed(const Duration(milliseconds: 450));
       final shot = await cam.takePicture();
-      final file = File(shot.path);
-      switch (pose) {
-        case _Pose.front:
-          _front = file;
-          _sessionTrackingId = _poseTrackingId;
-        case _Pose.left:
-          _left = file;
-        case _Pose.right:
-          _right = file;
-      }
+      _front = File(shot.path);
+      _sessionTrackingId = _poseTrackingId;
 
       if (!mounted) return;
       setState(() {
         _flash = false;
-        _justTook = switch (pose) {
-          _Pose.front => 'Front photo saved',
-          _Pose.left => 'Left photo saved',
-          _Pose.right => 'Right photo saved',
-        };
+        _justTook = 'Live photo saved';
       });
-      await Future<void>.delayed(const Duration(milliseconds: 800));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
-
-      if (_front != null && _left != null && _right != null) {
-        Navigator.of(context).pop(
-          KycLivenessShots(front: _front!, left: _left!, right: _right!),
-        );
-        return;
-      }
-
-      setState(() {
-        _justTook = null;
-        _stage = _Stage.fit;
-        _fit = _Fit.noFace;
-        _pose = pose == _Pose.front ? _Pose.left : _Pose.right;
-      });
-      _resetLivenessForPose();
-      await cam.startImageStream(_onFrame);
+      Navigator.of(context).pop(KycLivenessShots(front: _front!));
+      return;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -580,8 +563,6 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
         _stage = _Stage.fit;
         _fit = _Fit.noFace;
         _front = null;
-        _left = null;
-        _right = null;
       });
       _sessionTrackingId = null;
       _baselineYaw = null;
@@ -644,12 +625,6 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
     return InputImageRotationValue.fromRawValue(degrees);
   }
 
-  String get _poseName => switch (_pose) {
-        _Pose.front => 'front',
-        _Pose.left => 'left',
-        _Pose.right => 'right',
-      };
-
   KycGuideState get _guideState {
     if (_justTook != null || _stage == _Stage.snap) {
       return KycGuideState.captured;
@@ -663,7 +638,7 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
 
   String get _headline {
     if (_justTook != null) return _justTook!;
-    if (_stage == _Stage.snap) return 'Taking $_poseName photo…';
+    if (_stage == _Stage.snap) return 'Taking your live photo…';
     if (_stage == _Stage.blink) {
       return _eyeScoresReady ? 'Now blink once' : 'Looking for a blink';
     }
@@ -683,8 +658,10 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
       case _Fit.needTurn:
         return switch (_pose) {
           _Pose.front => 'Look straight at the camera',
-          _Pose.left => 'Turn your head to the left',
-          _Pose.right => 'Turn your head to the right',
+          _Pose.turn => _turnLeft
+              ? 'Turn your head to the left'
+              : 'Turn your head to the right',
+          _Pose.center => 'Look back at the camera',
         };
       case _Fit.good:
         return _stage == _Stage.steady ? 'Stay put' : 'Hold still';
@@ -692,11 +669,11 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
   }
 
   String get _detail {
-    if (_justTook != null) return 'Next pose is coming up.';
+    if (_justTook != null) return 'That is your live selfie.';
     if (_stage == _Stage.snap) return 'Do not move.';
     if (_stage == _Stage.blink) {
       return _eyeScoresReady
-          ? 'Close both eyes, then open them. The photo is taken right after.'
+          ? 'Close both eyes, then open them. A printed photo cannot do this.'
           : 'More light on your face helps the blink check.';
     }
     switch (_fit) {
@@ -713,15 +690,19 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
       case _Fit.needLive:
         return 'Look at the camera and blink once when asked.';
       case _Fit.needTurn:
-        return _pose == _Pose.front
-            ? 'Face the camera so the ring turns blue.'
-            : _pose == _Pose.left
-                ? 'Slowly turn so your left ear moves toward the camera. We need to see the head move.'
-                : 'Slowly turn so your right ear moves toward the camera. We need to see the head move.';
+        return switch (_pose) {
+          _Pose.front => 'Face the camera so the ring turns blue.',
+          _Pose.turn => _turnLeft
+              ? 'Slowly turn so your left ear moves toward the camera. We need to see the head move.'
+              : 'Slowly turn so your right ear moves toward the camera. We need to see the head move.',
+          _Pose.center => 'Face the camera again. The live photo is taken next.',
+        };
       case _Fit.good:
-        return _pose == _Pose.front
-            ? 'Keep steady — then blink when asked.'
-            : 'Keep the turn and stay steady — the photo is taken next.';
+        return switch (_pose) {
+          _Pose.front => 'Keep steady — then blink when asked.',
+          _Pose.turn => 'Keep the turn so we can see you move.',
+          _Pose.center => 'Hold still — the photo is taken next.',
+        };
     }
   }
 
@@ -766,9 +747,11 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
           _briefing
               ? 'Live selfie'
               : switch (_pose) {
-                  _Pose.front => 'Step 1 of 3 · Front',
-                  _Pose.left => 'Step 2 of 3 · Look left',
-                  _Pose.right => 'Step 3 of 3 · Look right',
+                  _Pose.front => 'Step 1 of 3 · Blink',
+                  _Pose.turn => _turnLeft
+                      ? 'Step 2 of 3 · Turn left'
+                      : 'Step 2 of 3 · Turn right',
+                  _Pose.center => 'Step 3 of 3 · Live photo',
                 },
         ),
         backgroundColor: Colors.black,
@@ -852,10 +835,13 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
                         padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
                         child: Column(
                           children: [
-                            _StepRow(pose: _pose, capturedFront: _front != null, capturedLeft: _left != null),
+                            _StepRow(
+                              pose: _pose,
+                              turnLeft: _turnLeft,
+                            ),
                             const SizedBox(height: 10),
                             const Text(
-                              'Blink on the front shot. Then turn your head left, then right — we check that it actually moves.',
+                              'Blink, then turn when asked. We only keep one live photo after you look back at the camera.',
                               textAlign: TextAlign.center,
                               style: TextStyle(color: Colors.white70),
                             ),
@@ -920,27 +906,29 @@ class _Banner extends StatelessWidget {
 class _StepRow extends StatelessWidget {
   const _StepRow({
     required this.pose,
-    required this.capturedFront,
-    required this.capturedLeft,
+    required this.turnLeft,
   });
 
   final _Pose pose;
-  final bool capturedFront;
-  final bool capturedLeft;
+  final bool turnLeft;
 
   @override
   Widget build(BuildContext context) {
-    final states = [
-      capturedFront,
-      capturedLeft,
-      false,
-    ];
     final current = switch (pose) {
       _Pose.front => 0,
-      _Pose.left => 1,
-      _Pose.right => 2,
+      _Pose.turn => 1,
+      _Pose.center => 2,
     };
-    const labels = ['Front · blink', 'Turn left', 'Turn right'];
+    final labels = [
+      'Blink',
+      turnLeft ? 'Turn left' : 'Turn right',
+      'Photo',
+    ];
+    final states = [
+      current > 0,
+      current > 1,
+      false,
+    ];
     return Row(
       children: [
         for (var i = 0; i < labels.length; i++) ...[
@@ -1006,7 +994,7 @@ class _Briefing extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const Text(
-            'This stops someone from using a printed photo or another phone. Follow the three steps — it takes about 20 seconds.',
+            'This looks for a live person — a blink and a real head turn. A printed photo or another phone screen will not pass.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white70, height: 1.4),
           ),
@@ -1014,19 +1002,19 @@ class _Briefing extends StatelessWidget {
           const _BriefRow(
             icon: Icons.visibility_outlined,
             title: 'Blink once',
-            body: 'Look at the camera. We take the front selfie after you blink.',
+            body: 'Eyes must close and open. A still picture cannot do that.',
           ),
           const SizedBox(height: 12),
           const _BriefRow(
-            icon: Icons.rotate_left_rounded,
-            title: 'Turn left',
-            body: 'Slowly move your head so we can see the turn.',
+            icon: Icons.rotate_90_degrees_ccw_rounded,
+            title: 'Turn when asked',
+            body: 'Left or right, chosen at random. We watch the head actually move.',
           ),
           const SizedBox(height: 12),
           const _BriefRow(
-            icon: Icons.rotate_right_rounded,
-            title: 'Turn right',
-            body: 'Same motion the other way. Then you are done.',
+            icon: Icons.photo_camera_outlined,
+            title: 'One live photo',
+            body: 'Look back at the camera. We keep that selfie for the ID match.',
           ),
           const Spacer(),
           FilledButton(

@@ -2,131 +2,140 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// Returns true only when location services are on and the app has
-/// location permission (while-in-use or always). Shows dialogs otherwise.
-Future<bool> ensureLocationAccessForRental(BuildContext context) async {
+enum LocationAccessResult {
+  granted,
+  denied,
+  awaitingPhone,
+}
+
+/// GPS on plus location while using the app (or all the time).
+/// Android’s system sheet always includes “While using the app” — we cannot
+/// hide that. A rental still shares in the background via a foreground service.
+Future<LocationAccessResult> ensureLocationAccessForRental(
+  BuildContext context, {
+  bool offerBattery = true,
+}) async {
   final serviceOn = await Geolocator.isLocationServiceEnabled();
   if (!serviceOn) {
-    if (!context.mounted) return false;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        final t = Theme.of(ctx);
-        return AlertDialog(
-          icon: Icon(
-            Icons.location_off_outlined,
-            size: 32,
-            color: t.colorScheme.error,
-          ),
-          title: const Text('GPS is off'),
-          content: const Text(
-            'QRide needs your GPS to track the ride and show your location to '
-            'the admin. Please enable Location Services, then try again.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                Geolocator.openLocationSettings();
-              },
-              child: const Text('Open settings'),
-            ),
-          ],
-        );
-      },
-    );
-    return false;
+    if (!context.mounted) return LocationAccessResult.denied;
+    await _gpsOffDialog(context);
+    return LocationAccessResult.awaitingPhone;
   }
 
-  var permission = await Geolocator.checkPermission();
-  if (permission == LocationPermission.denied) {
-    permission = await Geolocator.requestPermission();
+  if (await _hasRentalLocation()) {
+    if (offerBattery && context.mounted) {
+      await _offerUnrestrictedBattery(context);
+    }
+    return LocationAccessResult.granted;
   }
 
-  // While-in-use is enough to scan and request a bike. "Allow all the time"
-  // is an Android settings page, not a dialog — opening it here leaves the
-  // scanner waiting. Background access is requested when the ride starts.
-  if (permission == LocationPermission.whileInUse ||
-      permission == LocationPermission.always) {
-    return true;
+  final status = await Permission.location.request();
+  if (await _hasRentalLocation() || status.isGranted) {
+    if (offerBattery && context.mounted) {
+      await _offerUnrestrictedBattery(context);
+    }
+    return LocationAccessResult.granted;
   }
 
-  if (!context.mounted) return false;
+  if (status.isPermanentlyDenied) {
+    if (context.mounted) await _openAppLocationSettings(context);
+    return LocationAccessResult.awaitingPhone;
+  }
 
-  final permanentlyDenied = permission == LocationPermission.deniedForever;
+  return LocationAccessResult.denied;
+}
 
-  await showDialog<void>(
+Future<bool> hasLocationAccessForRental() async {
+  if (!await Geolocator.isLocationServiceEnabled()) return false;
+  return _hasRentalLocation();
+}
+
+Future<bool> hasAlwaysLocation() => _hasRentalLocation();
+
+Future<void> offerBackgroundLocation(BuildContext context) async {}
+
+Future<bool> _hasRentalLocation() async {
+  if (await Permission.locationAlways.isGranted) return true;
+  if (await Permission.locationWhenInUse.isGranted) return true;
+  if (await Permission.location.isGranted) return true;
+  final geo = await Geolocator.checkPermission();
+  return geo == LocationPermission.always ||
+      geo == LocationPermission.whileInUse;
+}
+
+Future<void> _gpsOffDialog(BuildContext context) {
+  return showDialog<void>(
     context: context,
     builder: (ctx) {
       final t = Theme.of(ctx);
       return AlertDialog(
         icon: Icon(
-          Icons.location_disabled_outlined,
+          Icons.location_off_outlined,
           size: 32,
           color: t.colorScheme.error,
         ),
-        title: const Text('Location permission required'),
-        content: Text(
-          permanentlyDenied
-              ? 'QRide cannot rent a bike without location access. '
-                    'Enable location permission for QRide in your device settings, '
-                    'then try again.'
-              : 'QRide needs location access to track your ride and show your '
-                    'position to the admin. Please allow location permission to continue.',
+        title: const Text('GPS is off'),
+        content: const Text(
+          'Turn on Location so staff can see the bike during your ride.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            child: const Text('Not now'),
           ),
-          if (permanentlyDenied)
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                openAppSettings();
-              },
-              child: const Text('Open settings'),
-            )
-          else
-            FilledButton(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await Geolocator.requestPermission();
-              },
-              child: const Text('Allow'),
-            ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Geolocator.openLocationSettings();
+            },
+            child: const Text('Turn on GPS'),
+          ),
         ],
       );
     },
   );
-  return false;
 }
 
-bool _offeredBackgroundLocation = false;
-
-/// Once a ride is active, explain that pocket / screen-off sharing needs
-/// "Allow all the time". Declining still leaves while-in-use GPS working.
-Future<void> offerBackgroundLocation(BuildContext context) async {
-  if (_offeredBackgroundLocation) return;
-  final permission = await Geolocator.checkPermission();
-  if (permission == LocationPermission.always) return;
-  if (permission != LocationPermission.whileInUse) return;
-  if (await Permission.locationAlways.isGranted) return;
-  _offeredBackgroundLocation = true;
-  if (!context.mounted) return;
-  final open = await showDialog<bool>(
+Future<void> _openAppLocationSettings(BuildContext context) {
+  return showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
       icon: const Icon(Icons.my_location_rounded),
-      title: const Text('Keep sharing off-screen'),
+      title: const Text('Allow location'),
       content: const Text(
-        'Choose Allow all the time so QRide can share your ride location '
-        'with the screen off or while you use another app. '
-        'Allow only while using the app still works when QRide is open.',
+        'QRide needs location while you use the app so staff can see the bike. '
+        'On the next screen, allow location. The scanner stays open.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Not now'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.pop(ctx);
+            openAppSettings();
+          },
+          child: const Text('Open settings'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _offerUnrestrictedBattery(BuildContext context) async {
+  final status = await Permission.ignoreBatteryOptimizations.status;
+  if (status.isGranted) return;
+  if (!context.mounted) return;
+  final go = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: const Icon(Icons.battery_charging_full_rounded),
+      title: const Text('Keep sharing during the ride'),
+      content: const Text(
+        'If you allow this, QRide can keep sharing the bike while the screen '
+        'is off or you leave the app. A “Rental in progress” notice stays on '
+        'until the ride ends.',
       ),
       actions: [
         TextButton(
@@ -135,20 +144,12 @@ Future<void> offerBackgroundLocation(BuildContext context) async {
         ),
         FilledButton(
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Choose permission'),
+          child: const Text('Allow'),
         ),
       ],
     ),
   );
-  if (open == true) {
-    await Permission.locationAlways.request();
+  if (go == true) {
+    await Permission.ignoreBatteryOptimizations.request();
   }
-}
-
-/// Silent check used right before submitting a rental request.
-Future<bool> hasLocationAccessForRental() async {
-  if (!await Geolocator.isLocationServiceEnabled()) return false;
-  final permission = await Geolocator.checkPermission();
-  return permission == LocationPermission.whileInUse ||
-      permission == LocationPermission.always;
 }

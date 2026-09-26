@@ -107,7 +107,9 @@ class AnalyticsRepository {
 
   static double? rideMinutesOf(Rental r) {
     final ended = r.endedAt;
-    if (ended == null || r.status != 'ended') return null;
+    if (ended == null || r.status != 'ended' || r.approvedAt == null) {
+      return null;
+    }
     final minutes = rideElapsedMinutes(r, ended);
     if (minutes.isNaN || minutes.isInfinite || minutes < 0) return null;
     return minutes;

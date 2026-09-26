@@ -37,12 +37,9 @@ class Rental {
   DateTime? get scheduledEndTime =>
       approvedAt?.add(Duration(minutes: plannedMinutes));
 
-  /// Cost accrued so far (while active). Does not include penalty.
+  /// Fixed charge for the chosen slot. Returning early does not lower it.
   double currentCost(DateTime now) {
-    final start = approvedAt;
-    if (start == null) return estimatedCost ?? 0;
-    final elapsedMin = now.difference(start).inSeconds / 60.0;
-    return (elapsedMin / 60.0) * ratePerHour;
+    return estimatedCost ?? (plannedMinutes / 60.0) * ratePerHour;
   }
 
   /// Overtime minutes (0 if still within planned duration).

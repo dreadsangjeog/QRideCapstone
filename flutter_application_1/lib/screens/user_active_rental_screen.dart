@@ -15,7 +15,6 @@ import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
 import '../services/rental_repository.dart';
 import '../services/supabase_client.dart';
-import '../utils/location_access.dart';
 import '../widgets/heading_map_pin.dart';
 import '../widgets/qride_map_tiles.dart';
 import '../widgets/user_portal_chrome.dart';
@@ -111,7 +110,6 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       });
       if (rental?.isActive == true) {
         _startRideTimer();
-        unawaited(offerBackgroundLocation(context));
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
@@ -259,7 +257,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     final extra = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => _ExtendTimeSheet(
+      builder: (ctx) => ExtendTimeSheet(
         currentPlannedMinutes: rental.plannedMinutes,
         ratePerHour: rental.ratePerHour,
       ),
@@ -308,7 +306,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const UserPortalScaffold(
-        title: 'Active rental',
+        title: 'My rental',
         body: Center(child: CircularProgressIndicator()),
       );
     }
@@ -328,7 +326,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     return UserPortalScaffold(
-      title: 'Active rental',
+      title: 'My rental',
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [
@@ -389,7 +387,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
         : '${rental.plannedMinutes}m';
 
     return UserPortalScaffold(
-      title: 'Active rental',
+      title: 'Rental request',
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [
@@ -459,8 +457,8 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                     value: hours,
                   ),
                   _RentalInfoRow(
-                    icon: Icons.attach_money_rounded,
-                    label: 'Est. cost',
+                    icon: Icons.payments_outlined,
+                    label: 'Rental charge',
                     value: '₱${(rental.estimatedCost ?? 0).toStringAsFixed(2)}',
                   ),
                   _RentalInfoRow(
@@ -470,7 +468,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'The admin has been notified. Your ride will begin as soon as they approve.',
+                    'Staff have been notified. Your rental time and charge clock start only after they approve.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: cs.onSurfaceVariant,
                       height: 1.4,
@@ -518,7 +516,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     final overtimeMin = rental.overtimeMinutes(_now);
 
     return UserPortalScaffold(
-      title: 'Active rental',
+      title: 'My rental',
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [
@@ -654,7 +652,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                     ),
                     child: Column(
                       children: [
-                        _CostRow(label: 'Base cost', value: elapsedCost),
+                        _CostRow(label: 'Rental charge', value: elapsedCost),
                         if (penalty > 0) ...[
                           _CostRow(
                             label: 'Penalty (${overtimeMin}m overtime × 1.5×)',
@@ -663,13 +661,13 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                           ),
                           const Divider(height: 16),
                           _CostRow(
-                            label: 'Total so far',
+                            label: 'Amount due',
                             value: totalCost,
                             bold: true,
                           ),
                         ] else
                           _CostRow(
-                            label: 'Total so far',
+                            label: 'Amount due',
                             value: totalCost,
                             bold: true,
                           ),
@@ -775,7 +773,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     final base = totalCost - penalty;
 
     return UserPortalScaffold(
-      title: 'Active rental',
+      title: 'My rental',
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [

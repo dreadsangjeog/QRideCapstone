@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -25,12 +26,22 @@ class NotificationService {
   static bool soundEnabled = true;
   static bool vibrationEnabled = true;
   static bool bannersEnabled = true;
+  static DateTime? _lastKycCue;
 
   static const _channel = AndroidNotificationChannel(
     'qride_rental',
     'Rental Alerts',
     description: 'Time warnings, approvals, and receipts for active rentals.',
     importance: Importance.high,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  static const _kycChannel = AndroidNotificationChannel(
+    'qride_kyc',
+    'Identity alerts',
+    description: 'When staff approve or reject your ID.',
+    importance: Importance.max,
     playSound: true,
     enableVibration: true,
   );
@@ -64,20 +75,21 @@ class NotificationService {
     if (_ready) return;
     await loadPrefs();
 
-    await _plugin
+    final androidPlugin = _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(_channel);
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(_channel);
+    await androidPlugin?.createNotificationChannel(_kycChannel);
 
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
     );
 
     await _plugin.initialize(
-      const InitializationSettings(android: android, iOS: ios),
+      const InitializationSettings(android: androidSettings, iOS: ios),
     );
 
     _ready = true;
@@ -100,24 +112,30 @@ class NotificationService {
     required String title,
     required String body,
     Importance importance = Importance.high,
+    AndroidNotificationChannel? channel,
   }) async {
     await init();
     if (!bannersEnabled) return;
+    final used = channel ?? _channel;
     await _plugin.show(
       id,
       title,
       body,
       NotificationDetails(
         android: AndroidNotificationDetails(
-          _channel.id,
-          _channel.name,
-          channelDescription: _channel.description,
+          used.id,
+          used.name,
+          channelDescription: used.description,
           importance: importance,
-          priority: Priority.high,
+          priority: importance == Importance.max
+              ? Priority.max
+              : Priority.high,
           icon: '@mipmap/ic_launcher',
           playSound: soundEnabled,
           enableVibration: vibrationEnabled,
           silent: !soundEnabled && !vibrationEnabled,
+          category: AndroidNotificationCategory.status,
+          audioAttributesUsage: AudioAttributesUsage.notification,
         ),
         iOS: DarwinNotificationDetails(
           presentSound: soundEnabled,
@@ -128,12 +146,35 @@ class NotificationService {
     );
   }
 
+  /// In-app chime + vibration when staff verify the rider.
+  static Future<void> playKycVerifiedCue() async {
+    await init();
+    final now = DateTime.now();
+    if (_lastKycCue != null &&
+        now.difference(_lastKycCue!) < const Duration(seconds: 4)) {
+      return;
+    }
+    _lastKycCue = now;
+    if (soundEnabled) {
+      await SystemSound.play(SystemSoundType.alert);
+    }
+    if (vibrationEnabled) {
+      await HapticFeedback.heavyImpact();
+    }
+  }
+
   /// Banner for a new inbox row (from Realtime). Uses rotating IDs so
   /// multiple alerts can stack briefly.
-  static Future<void> showInboxBanner(AppNotification n) {
+  static Future<void> showInboxBanner(AppNotification n) async {
+    final kyc = n.type == 'kyc_verified' || n.type == 'kyc_rejected';
+    if (n.type == 'kyc_verified') {
+      await playKycVerifiedCue();
+    }
     final id = _inboxId;
     _inboxId = 20 + ((_inboxId - 19) % 40);
-    final importance = n.type == 'rental_overtime' || n.type == 'rental_ended'
+    final importance = n.type == 'rental_overtime' ||
+            n.type == 'rental_ended' ||
+            n.type == 'kyc_verified'
         ? Importance.max
         : Importance.high;
     return _show(
@@ -141,6 +182,7 @@ class NotificationService {
       title: n.title,
       body: n.body,
       importance: importance,
+      channel: kyc ? _kycChannel : _channel,
     );
   }
 

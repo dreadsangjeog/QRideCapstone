@@ -10,6 +10,7 @@ import '../utils/auth_validators.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_generate_qr_screen.dart';
+import 'kyc/kyc_scope.dart';
 import 'legal/terms_screen.dart';
 import 'notification_settings_screen.dart';
 import 'user_account_settings_screen.dart';
@@ -70,7 +71,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _saveName() async {
-    if (_profile?.isVerified == true) return;
+    if (_profile?.personalDetailsLocked == true) return;
     if (!(_nameFormKey.currentState?.validate() ?? false)) return;
     setState(() => _savingName = true);
     try {
@@ -247,10 +248,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 middleName: _middleName,
                 lastName: _lastName,
                 birthdate: _birthdate,
-                locked: _profile?.isVerified == true,
+                locked: _profile?.personalDetailsLocked == true,
                 saving: _savingName,
                 onSave: _saveName,
               ),
+              if (_profile != null && !_profile!.isVerified) ...[
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final kyc = KycScope.maybeOf(context);
+                    if (kyc != null && kyc.profile.needsAction) {
+                      await kyc.openWizard(context);
+                      await _loadProfile();
+                      return;
+                    }
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Staff are still checking your ID. You will get a notification when you are verified.',
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.verified_user_outlined),
+                  label: Text(
+                    _profile!.needsAction
+                        ? 'Continue ID verification'
+                        : 'Waiting for staff review',
+                  ),
+                ),
+              ],
               const SizedBox(height: 28),
               const PortalSectionLabel('Settings'),
               PolishedSectionCard(
@@ -514,8 +542,8 @@ class _LegalNameCard extends StatelessWidget {
                 children: [
                   Text(
                     locked
-                        ? 'Locked after ID verification. This name was matched to your ID.'
-                        : 'Used to match the ID you upload. You can edit it until you are verified.',
+                        ? 'Locked after the ID check. This name was matched to your ID and cannot be changed.'
+                        : 'Used to match the ID you upload. You can edit it until you photograph your ID.',
                     style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
                   ),
                   const SizedBox(height: 12),

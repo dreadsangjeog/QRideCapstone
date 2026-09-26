@@ -10,7 +10,10 @@ import 'admin_layout.dart';
 
 /// Admin tab: search riders and review uploaded ID / selfies.
 class AdminVerifyUsersTab extends StatefulWidget {
-  const AdminVerifyUsersTab({super.key});
+  const AdminVerifyUsersTab({super.key, this.changes});
+
+  /// Bumps when a rider submits or updates ID verification.
+  final Listenable? changes;
 
   @override
   State<AdminVerifyUsersTab> createState() => _AdminVerifyUsersTabState();
@@ -25,6 +28,36 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
   String? _statusFilter = 'pending';
   bool _newestFirst = false;
   late Future<List<KycPendingUser>> _future = _load();
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.changes?.addListener(_onOutsideChange);
+    _poll = Timer.periodic(const Duration(seconds: 12), (_) => _onOutsideChange());
+  }
+
+  @override
+  void didUpdateWidget(AdminVerifyUsersTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.changes != widget.changes) {
+      oldWidget.changes?.removeListener(_onOutsideChange);
+      widget.changes?.addListener(_onOutsideChange);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.changes?.removeListener(_onOutsideChange);
+    _debounce?.cancel();
+    _poll?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onOutsideChange() {
+    if (mounted) unawaited(_refresh());
+  }
 
   Future<List<KycPendingUser>> _load() {
     return _repo.searchUsers(
@@ -58,13 +91,6 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
       builder: (_) => _AdminKycReviewScreen(user: u),
     );
     if (changed == true && mounted) await _refresh();
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _searchCtrl.dispose();
-    super.dispose();
   }
 
   @override
@@ -145,9 +171,19 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                             runSpacing: 8,
                             children: [
                               _FilterChip(
+                                label: 'All',
+                                selected: _statusFilter == null,
+                                onTap: () => _setFilter(null),
+                              ),
+                              _FilterChip(
                                 label: 'Pending',
                                 selected: _statusFilter == 'pending',
                                 onTap: () => _setFilter('pending'),
+                              ),
+                              _FilterChip(
+                                label: 'Unverified',
+                                selected: _statusFilter == 'unverified',
+                                onTap: () => _setFilter('unverified'),
                               ),
                               _FilterChip(
                                 label: 'Verified',
@@ -158,11 +194,6 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                                 label: 'Rejected',
                                 selected: _statusFilter == 'rejected',
                                 onTap: () => _setFilter('rejected'),
-                              ),
-                              _FilterChip(
-                                label: 'All',
-                                selected: _statusFilter == null,
-                                onTap: () => _setFilter(null),
                               ),
                             ],
                           ),
@@ -654,7 +685,7 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
                   child: ListTile(
                     leading: Icon(Icons.sticky_note_2_outlined,
                         color: cs.onSurfaceVariant),
-                    title: const Text('Admin note'),
+                    title: const Text('Review note'),
                     subtitle: Text(u.note!),
                   ),
                 ),

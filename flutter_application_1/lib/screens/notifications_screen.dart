@@ -344,8 +344,9 @@ class HeaderCountBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = count > 99 ? '99+' : '$count';
     return Container(
-      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-      padding: const EdgeInsets.symmetric(horizontal: 5),
+      height: 18,
+      constraints: const BoxConstraints(minWidth: 18),
+      padding: EdgeInsets.symmetric(horizontal: label.length > 1 ? 4 : 0),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: _countRed,
@@ -373,18 +374,21 @@ class HeaderCountLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label),
-          if (count > 0) ...[
-            const SizedBox(width: 6),
-            HeaderCountBadge(count),
-          ],
-        ],
-      ),
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(8, count > 0 ? 6 : 0, count > 0 ? 14 : 8, 0),
+          child: Text(label),
+        ),
+        if (count > 0)
+          Positioned(
+            top: 0,
+            right: 0,
+            child: HeaderCountBadge(count),
+          ),
+      ],
     );
   }
 }

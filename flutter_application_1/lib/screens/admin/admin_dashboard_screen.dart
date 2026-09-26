@@ -49,6 +49,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   bool _adminGatePassed = false;
   int _pendingRequestCount = 0;
   int _pendingUserCount = 0;
+  int _activeRentalCount = 0;
+  final _liveTick = ValueNotifier<int>(0);
 
   @override
   void initState() {
@@ -59,6 +61,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   void dispose() {
     _pendingChannel?.unsubscribe();
+    _liveTick.dispose();
     _inbox.dispose();
     super.dispose();
   }
@@ -93,16 +96,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _subscribePendingCount();
   }
 
+  void _onLiveData() {
+    _liveTick.value++;
+    unawaited(_refreshPendingCount());
+    unawaited(_requestsTabKey.currentState?.refresh());
+  }
+
   Future<void> _refreshPendingCount() async {
     try {
       final results = await Future.wait<int>([
         _repo.countPendingRentals(),
         _kyc.countPendingReviews(),
+        _repo.countActiveRentals(),
       ]);
       if (!mounted) return;
       setState(() {
         _pendingRequestCount = results[0];
         _pendingUserCount = results[1];
+        _activeRentalCount = results[2];
       });
     } catch (e) {
       debugPrint('pending request count failed: $e');
@@ -117,16 +128,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'rentals',
-          callback: (_) {
-            unawaited(_refreshPendingCount());
-            unawaited(_requestsTabKey.currentState?.refresh());
-          },
+          callback: (_) => _onLiveData(),
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'profiles',
-          callback: (_) => unawaited(_refreshPendingCount()),
+          callback: (_) => _onLiveData(),
         )
         .subscribe();
   }
@@ -256,7 +264,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               const Tab(text: '  Dashboard  '),
               const Tab(text: '  Bikes  '),
               Tab(child: HeaderCountLabel('Requests', _pendingRequestCount)),
-              const Tab(text: '  Active  '),
+              Tab(child: HeaderCountLabel('Active', _activeRentalCount)),
               const Tab(text: '  History  '),
               const Tab(text: '  Map  '),
               Tab(child: HeaderCountLabel('Users', _pendingUserCount)),
@@ -278,10 +286,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               repo: _repo,
               onQueueChanged: _refreshPendingCount,
             ),
-            _ActiveRentalsTab(repo: _repo),
-            AdminHistoryTab(repo: _repo),
+            _ActiveRentalsTab(repo: _repo, changes: _liveTick),
+            AdminHistoryTab(repo: _repo, changes: _liveTick),
             AdminMapTab(repo: _repo),
-            const AdminVerifyUsersTab(),
+            AdminVerifyUsersTab(changes: _liveTick),
             AdminReportsTab(repo: AnalyticsRepository()),
           ],
         )),

@@ -4,9 +4,10 @@ import '../models/rental.dart';
 double baseRentalCost(Rental r) =>
     (r.plannedMinutes / 60.0) * r.ratePerHour;
 
-/// Ride length in minutes from approval (or request if no approval) to [at].
+/// Ride length in minutes from approval to [at]. Wait time is not counted.
 double rideElapsedMinutes(Rental r, DateTime at) {
-  final start = r.approvedAt ?? r.startedAt;
+  final start = r.approvedAt;
+  if (start == null) return 0;
   return at.difference(start).inSeconds / 60.0;
 }
 

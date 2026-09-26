@@ -111,7 +111,7 @@ class AdminHomeTabState extends State<AdminHomeTab> {
         label: 'Completed · 7d',
         hint: week?.averageDuration == null
             ? 'No timed rides yet'
-            : 'Avg ${formatRideDurationMinutes(week!.averageDuration!.inSeconds / 60)} per ride',
+            : 'Avg ${formatRideDurationMinutes(week!.averageDuration!.inSeconds / 60)} approval to return',
         value: '${week?.completedCount ?? 0}',
         icon: Icons.task_alt_rounded,
         color: _green,

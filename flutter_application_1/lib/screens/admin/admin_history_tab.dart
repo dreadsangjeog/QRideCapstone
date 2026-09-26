@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -13,9 +15,10 @@ typedef _BillingOutcome = ({double penalty, double total});
 
 /// Admin view of all rentals: who requested which bike and current/historical outcome.
 class AdminHistoryTab extends StatefulWidget {
-  const AdminHistoryTab({super.key, required this.repo});
+  const AdminHistoryTab({super.key, required this.repo, this.changes});
 
   final AdminRepository repo;
+  final Listenable? changes;
 
   @override
   State<AdminHistoryTab> createState() => _AdminHistoryTabState();
@@ -31,6 +34,34 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
 
   String? _statusFilter;
   late Future<List<RentalWithBike>> _future = _load();
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.changes?.addListener(_onLive);
+    _poll = Timer.periodic(const Duration(seconds: 12), (_) => _onLive());
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminHistoryTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.changes != widget.changes) {
+      oldWidget.changes?.removeListener(_onLive);
+      widget.changes?.addListener(_onLive);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.changes?.removeListener(_onLive);
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  void _onLive() {
+    if (mounted) unawaited(_refresh());
+  }
 
   Future<List<RentalWithBike>> _load() =>
       widget.repo.fetchRentalsHistory(status: _statusFilter);

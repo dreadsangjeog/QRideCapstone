@@ -73,7 +73,7 @@ class LocationTrackingService {
       );
     }
 
-    LocationPermission permission = await Geolocator.checkPermission();
+    var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
@@ -95,12 +95,6 @@ class LocationTrackingService {
       await Permission.notification.request();
     }
 
-    // Screen-off / pocket: Android Doze will freeze GPS unless the rider
-    // allows QRide to run unrestricted. Decline is OK; FGS still helps.
-    final battery = await Permission.ignoreBatteryOptimizations.status;
-    if (battery.isDenied) {
-      await Permission.ignoreBatteryOptimizations.request();
-    }
   }
 
   /// Screen locked or QRide sent to background — keep sharing, do not stop.
@@ -139,7 +133,7 @@ class LocationTrackingService {
         intervalDuration: const Duration(seconds: 1),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationText:
-              'Sharing your ride location. This stays on with the screen off.',
+              'Sharing bike location. Stays on if you leave QRide or lock the phone.',
           notificationTitle: 'Rental in progress',
           enableWakeLock: true,
           setOngoing: true,
