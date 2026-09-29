@@ -26,6 +26,7 @@ import '../../services/analytics_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/supabase_client.dart';
 import '../../theme/brand.dart';
+import '../../widgets/bike_photo.dart';
 import '../notifications_screen.dart';
 
 part 'admin_dashboard_widgets.dart';
@@ -51,6 +52,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _pendingUserCount = 0;
   int _activeRentalCount = 0;
   final _liveTick = ValueNotifier<int>(0);
+  Timer? _liveDebounce;
 
   @override
   void initState() {
@@ -61,6 +63,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   void dispose() {
     _pendingChannel?.unsubscribe();
+    _liveDebounce?.cancel();
     _liveTick.dispose();
     _inbox.dispose();
     super.dispose();
@@ -97,9 +100,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   void _onLiveData() {
-    _liveTick.value++;
-    unawaited(_refreshPendingCount());
-    unawaited(_requestsTabKey.currentState?.refresh());
+    _liveDebounce?.cancel();
+    _liveDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      _liveTick.value++;
+      unawaited(_refreshPendingCount());
+      unawaited(_requestsTabKey.currentState?.refresh());
+    });
   }
 
   Future<void> _refreshPendingCount() async {
@@ -214,13 +221,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: QrideBrand.accent.withValues(alpha: 0.12),
+                  color: (isDark ? cs.primary : QrideBrand.accent)
+                      .withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(999),
                 ),
-                child: const Text(
+                child: Text(
                   'Admin',
                   style: TextStyle(
-                    color: QrideBrand.accent,
+                    color: isDark ? cs.primary : QrideBrand.accent,
                     fontWeight: FontWeight.w800,
                     fontSize: 12,
                   ),
@@ -250,12 +258,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             indicator: BoxDecoration(
-              color: QrideBrand.accent.withValues(alpha: 0.12),
+              color: (isDark ? cs.primary : QrideBrand.accent)
+                  .withValues(alpha: 0.16),
               borderRadius: BorderRadius.circular(999),
             ),
             indicatorSize: TabBarIndicatorSize.tab,
-            labelColor: QrideBrand.accent,
-            unselectedLabelColor: onBar.withValues(alpha: 0.55),
+            labelColor: isDark ? cs.primary : QrideBrand.accent,
+            unselectedLabelColor: onBar.withValues(alpha: 0.72),
             labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
             unselectedLabelStyle:
                 const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),

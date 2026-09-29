@@ -6,6 +6,7 @@ part of 'admin_requests_tab.dart';
 
 class _RequestCard extends StatelessWidget {
   const _RequestCard({
+    super.key,
     required this.row,
     required this.onApprove,
   });
@@ -67,16 +68,22 @@ class _RequestCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
+                    color: cs.brightness == Brightness.dark
+                        ? const Color(0xFFF59E0B).withValues(alpha: 0.20)
+                        : const Color(0xFFFEF3C7),
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
-                      color: const Color(0xFFF59E0B).withValues(alpha: 0.5),
+                      color: const Color(0xFFF59E0B).withValues(
+                        alpha: cs.brightness == Brightness.dark ? 0.45 : 0.5,
+                      ),
                     ),
                   ),
                   child: Text(
                     'Pending',
                     style: theme.textTheme.labelSmall?.copyWith(
-                      color: const Color(0xFFB45309),
+                      color: cs.brightness == Brightness.dark
+                          ? const Color(0xFFFBBF24)
+                          : const Color(0xFFB45309),
                       fontWeight: FontWeight.w700,
                     ),
                   ),

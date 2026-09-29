@@ -8,13 +8,14 @@ enum LocationAccessResult {
   awaitingPhone,
 }
 
-/// GPS on plus location while using the app (or all the time).
-/// Android’s system sheet always includes “While using the app” — we cannot
-/// hide that. A rental still shares in the background via a foreground service.
+/// GPS on plus **while using the app**.
+///
+/// We do **not** require “Allow all the time.” During an active rental, the
+/// “Rental in progress” foreground service keeps sharing with the screen
+/// locked or another app open (still treated as using the app).
 Future<LocationAccessResult> ensureLocationAccessForRental(
-  BuildContext context, {
-  bool offerBattery = true,
-}) async {
+  BuildContext context,
+) async {
   final serviceOn = await Geolocator.isLocationServiceEnabled();
   if (!serviceOn) {
     if (!context.mounted) return LocationAccessResult.denied;
@@ -23,17 +24,12 @@ Future<LocationAccessResult> ensureLocationAccessForRental(
   }
 
   if (await _hasRentalLocation()) {
-    if (offerBattery && context.mounted) {
-      await _offerUnrestrictedBattery(context);
-    }
     return LocationAccessResult.granted;
   }
 
-  final status = await Permission.location.request();
+  // Request only while-in-use — never escalate to “all the time.”
+  final status = await Permission.locationWhenInUse.request();
   if (await _hasRentalLocation() || status.isGranted) {
-    if (offerBattery && context.mounted) {
-      await _offerUnrestrictedBattery(context);
-    }
     return LocationAccessResult.granted;
   }
 
@@ -50,13 +46,9 @@ Future<bool> hasLocationAccessForRental() async {
   return _hasRentalLocation();
 }
 
-Future<bool> hasAlwaysLocation() => _hasRentalLocation();
-
-Future<void> offerBackgroundLocation(BuildContext context) async {}
-
 Future<bool> _hasRentalLocation() async {
-  if (await Permission.locationAlways.isGranted) return true;
   if (await Permission.locationWhenInUse.isGranted) return true;
+  if (await Permission.locationAlways.isGranted) return true;
   if (await Permission.location.isGranted) return true;
   final geo = await Geolocator.checkPermission();
   return geo == LocationPermission.always ||
@@ -104,7 +96,7 @@ Future<void> _openAppLocationSettings(BuildContext context) {
       title: const Text('Allow location'),
       content: const Text(
         'QRide needs location while you use the app so staff can see the bike. '
-        'On the next screen, allow location. The scanner stays open.',
+        'On the next screen, choose “While using the app.” The scanner stays open.',
       ),
       actions: [
         TextButton(
@@ -121,35 +113,4 @@ Future<void> _openAppLocationSettings(BuildContext context) {
       ],
     ),
   );
-}
-
-Future<void> _offerUnrestrictedBattery(BuildContext context) async {
-  final status = await Permission.ignoreBatteryOptimizations.status;
-  if (status.isGranted) return;
-  if (!context.mounted) return;
-  final go = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      icon: const Icon(Icons.battery_charging_full_rounded),
-      title: const Text('Keep sharing during the ride'),
-      content: const Text(
-        'If you allow this, QRide can keep sharing the bike while the screen '
-        'is off or you leave the app. A “Rental in progress” notice stays on '
-        'until the ride ends.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Not now'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Allow'),
-        ),
-      ],
-    ),
-  );
-  if (go == true) {
-    await Permission.ignoreBatteryOptimizations.request();
-  }
 }

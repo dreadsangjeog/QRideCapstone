@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -23,15 +25,42 @@ class AdminRequestsTab extends StatefulWidget {
   State<AdminRequestsTab> createState() => AdminRequestsTabState();
 }
 
-class AdminRequestsTabState extends State<AdminRequestsTab> {
-  late Future<List<RentalWithBike>> _future = _load();
+class AdminRequestsTabState extends State<AdminRequestsTab>
+    with AdminSilentReload, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+  List<RentalWithBike>? _rows;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_reload());
+  }
 
   Future<List<RentalWithBike>> _load() => widget.repo.fetchPendingRentals();
 
   Future<void> refresh() async {
-    setState(() => _future = _load());
-    await _future;
+    await _reload();
     await widget.onQueueChanged?.call();
+  }
+
+  Future<void> _reload() async {
+    await silentReload(() async {
+      try {
+        final rows = await _load();
+        if (!mounted) return;
+        setState(() {
+          _rows = rows;
+          _error = null;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          if (_rows == null) _error = e;
+        });
+      }
+    });
   }
 
   Future<void> _approve(RentalWithBike row) async {
@@ -55,117 +84,110 @@ class AdminRequestsTabState extends State<AdminRequestsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return RefreshIndicator(
       onRefresh: refresh,
-      child: FutureBuilder<List<RentalWithBike>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return _centred(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.error_outline,
-                      size: 52,
-                      color: Theme.of(context).colorScheme.error),
-                  const SizedBox(height: 10),
-                  Text(snapshot.error.toString()),
-                  const SizedBox(height: 14),
-                  OutlinedButton.icon(
-                    onPressed: refresh,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
-                  ),
-                ],
-              ),
-            );
-          }
+      child: _requestsBody(),
+    );
+  }
 
-          final requests = snapshot.data ?? [];
-          if (requests.isEmpty) {
-            return ListView(
+  Widget _requestsBody() {
+    if (_rows == null && _error != null) {
+      return _centred(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline,
+                size: 52, color: Theme.of(context).colorScheme.error),
+            const SizedBox(height: 10),
+            Text(_error.toString()),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: refresh,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_rows == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final requests = _rows!;
+    if (requests.isEmpty) {
+      return ListView(
+        children: [
+          _centred(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _centred(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.inbox_outlined,
-                          size: 64,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No pending requests',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
+                Icon(Icons.inbox_outlined,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                const SizedBox(height: 16),
+                Text(
+                  'No pending requests',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'When a rider requests a bike, it will appear here for you to accept.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'When a rider requests a bike, it will appear here for you to accept.',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodyMedium
-                            ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 16),
-                      OutlinedButton.icon(
-                        onPressed: refresh,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Refresh'),
-                      ),
-                    ],
-                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: refresh,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
                 ),
               ],
-            );
-          }
+            ),
+          ),
+        ],
+      );
+    }
 
-          return ListView(
-            padding: adminPagePadding(context),
+    return ListView(
+      padding: adminPagePadding(context),
+      children: [
+        AdminContent(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AdminContent(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    AdminPageHeader(
-                      title: 'Rental requests',
-                      subtitle:
-                          '${requests.length} waiting · oldest first · the bike is marked rented when you accept',
-                      trailing: IconButton(
-                        tooltip: 'Refresh',
-                        onPressed: refresh,
-                        icon: const Icon(Icons.refresh_rounded),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    AdminCardGrid(
-                      minItemWidth: 360,
-                      spacing: 12,
-                      children: [
-                        for (final row in requests)
-                          _RequestCard(
-                            row: row,
-                            onApprove: () => _approve(row),
-                          ),
-                      ],
-                    ),
-                  ],
+              AdminPageHeader(
+                title: 'Rental requests',
+                subtitle:
+                    '${requests.length} waiting · oldest first · the bike is marked rented when you accept',
+                trailing: IconButton(
+                  tooltip: 'Refresh',
+                  onPressed: refresh,
+                  icon: const Icon(Icons.refresh_rounded),
                 ),
               ),
+              const SizedBox(height: 16),
+              AdminCardGrid(
+                minItemWidth: 360,
+                spacing: 12,
+                children: [
+                  for (final row in requests)
+                    _RequestCard(
+                      key: ValueKey(row.rental.id),
+                      row: row,
+                      onApprove: () => _approve(row),
+                    ),
+                ],
+              ),
             ],
-          );
-        },
-      ),
+          ),
+        ),
+      ],
     );
   }
 

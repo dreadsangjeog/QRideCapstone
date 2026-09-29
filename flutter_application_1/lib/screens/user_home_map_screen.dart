@@ -211,10 +211,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
       return;
     }
     if (fromResume && !_waitingLocationSettings) return;
-    final result = await ensureLocationAccessForRental(
-      context,
-      offerBattery: false,
-    );
+    final result = await ensureLocationAccessForRental(context);
     if (!mounted) return;
     _waitingLocationSettings = result == LocationAccessResult.awaitingPhone;
     if (result == LocationAccessResult.granted) {

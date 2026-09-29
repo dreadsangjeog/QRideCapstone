@@ -1,9 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../screens/splash_screen.dart';
 import 'auth_gate.dart';
 
-/// Shows splash on cold start, then [AuthGate].
+/// Phone: branded splash, then [AuthGate]. Web: login page immediately.
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
 
@@ -16,6 +17,8 @@ class _AppRootState extends State<AppRoot> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) return const AuthGate(key: ValueKey('auth-gate'));
+
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 450),
       switchInCurve: Curves.easeOut,

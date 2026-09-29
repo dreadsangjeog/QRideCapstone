@@ -115,10 +115,10 @@ class GlassPanel extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final fill = tint ??
         (isDark
-            ? Colors.white.withValues(alpha: 0.10)
+            ? const Color(0xE6182436)
             : Colors.white.withValues(alpha: 0.48));
     final rim = isDark
-        ? Colors.white.withValues(alpha: 0.18)
+        ? Colors.white.withValues(alpha: 0.22)
         : Colors.white.withValues(alpha: 0.82);
     final shine = isDark
         ? Colors.white.withValues(alpha: 0.18)

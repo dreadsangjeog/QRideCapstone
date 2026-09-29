@@ -27,7 +27,7 @@ class _MarkerRow {
   final DateTime? recordedAt;
   final double? heading;
 
-  /// Rider writes about every 5s. Allow a few missed uploads + phone clock
+  /// Rider writes about every 3s. Allow a few missed uploads + phone clock
   /// skew before we call the pin stale.
   static const liveWithin = Duration(seconds: 20);
   static const delayedWithin = Duration(seconds: 45);
@@ -92,12 +92,22 @@ class _MarkerRow {
       final label = (bikes?['label'] ?? '').toString().trim();
       final accRaw = json['accuracy_m'];
       final uname = (profiles?['username'] ?? '').toString().trim();
+      final legal = [
+        profiles?['first_name'],
+        profiles?['middle_name'],
+        profiles?['last_name'],
+      ]
+          .map((s) => (s ?? '').toString().trim())
+          .where((s) => s.isNotEmpty)
+          .join(' ');
 
       return _MarkerRow(
         rentalId: json['rental_id'].toString(),
         bikeCode: code,
         bikeLabel: label.isEmpty ? 'Bike $code' : label,
-        username: uname.isEmpty ? 'Unknown rider' : uname,
+        username: legal.isNotEmpty
+            ? legal
+            : (uname.isEmpty ? 'Unknown rider' : uname),
         lat: (json['lat'] as num).toDouble(),
         lng: (json['lng'] as num).toDouble(),
         accuracyM: accRaw == null ? null : (accRaw as num).toDouble(),

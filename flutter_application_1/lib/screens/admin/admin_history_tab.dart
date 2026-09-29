@@ -24,7 +24,10 @@ class AdminHistoryTab extends StatefulWidget {
   State<AdminHistoryTab> createState() => _AdminHistoryTabState();
 }
 
-class _AdminHistoryTabState extends State<AdminHistoryTab> {
+class _AdminHistoryTabState extends State<AdminHistoryTab>
+    with AdminSilentReload, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   static const _filters = <({String label, String? status})>[
     (label: 'All', status: null),
     (label: 'Ended', status: 'ended'),
@@ -33,14 +36,25 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
   ];
 
   String? _statusFilter;
-  late Future<List<RentalWithBike>> _future = _load();
+  List<RentalWithBike>? _rows;
+  Object? _error;
   Timer? _poll;
+  Timer? _clock;
+  Timer? _coalesce;
 
   @override
   void initState() {
     super.initState();
     widget.changes?.addListener(_onLive);
-    _poll = Timer.periodic(const Duration(seconds: 12), (_) => _onLive());
+    unawaited(_refresh());
+    _poll = Timer.periodic(const Duration(seconds: 45), (_) => _onLive());
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final rows = _rows;
+      if (rows == null || rows.isEmpty) return;
+      final needsTick = rows.any((r) => r.rental.isActive || r.rental.isPending);
+      if (needsTick) setState(() {});
+    });
   }
 
   @override
@@ -56,19 +70,37 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
   void dispose() {
     widget.changes?.removeListener(_onLive);
     _poll?.cancel();
+    _clock?.cancel();
+    _coalesce?.cancel();
     super.dispose();
   }
 
   void _onLive() {
-    if (mounted) unawaited(_refresh());
+    _coalesce?.cancel();
+    _coalesce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) unawaited(_refresh());
+    });
   }
 
   Future<List<RentalWithBike>> _load() =>
       widget.repo.fetchRentalsHistory(status: _statusFilter);
 
   Future<void> _refresh() async {
-    setState(() => _future = _load());
-    await _future;
+    await silentReload(() async {
+      try {
+        final rows = await _load();
+        if (!mounted) return;
+        setState(() {
+          _rows = rows;
+          _error = null;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          if (_rows == null) _error = e;
+        });
+      }
+    });
   }
 
   Future<void> _editEndedBilling(RentalWithBike row) async {
@@ -98,6 +130,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final df = DateFormat('MMM d, yyyy · h:mm a');
@@ -131,8 +164,10 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
                         if (!selected) return;
                         setState(() {
                           _statusFilter = f.status;
-                          _future = _load();
+                          _rows = null;
+                          _error = null;
                         });
+                        unawaited(_refresh());
                       },
                     ),
                 ],
@@ -143,86 +178,91 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
         Expanded(
           child: RefreshIndicator(
             onRefresh: _refresh,
-            child: FutureBuilder<List<RentalWithBike>>(
-              key: ValueKey<String?>(_statusFilter),
-              future: _future,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return ListView(
-                    children: const [
-                      SizedBox(height: 120),
-                      Center(child: CircularProgressIndicator()),
-                    ],
-                  );
-                }
-                if (snapshot.hasError) {
-                  return ListView(
-                    padding: const EdgeInsets.all(24),
-                    children: [
-                      Icon(Icons.error_outline, size: 48, color: cs.error),
-                      const SizedBox(height: 12),
-                      Text(snapshot.error.toString()),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: _refresh,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
-                      ),
-                    ],
-                  );
-                }
-                final rows = snapshot.data ?? [];
-                if (rows.isEmpty) {
-                  return ListView(
-                    children: [
-                      SizedBox(
-                        height: 280,
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.history_rounded,
-                                size: 56,
-                                color: cs.onSurfaceVariant,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'No rentals match this filter.',
-                                style: theme.textTheme.titleSmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                return ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: EdgeInsets.fromLTRB(pad.left, 0, pad.right, pad.bottom),
-                  itemCount: rows.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) => _HistoryRentalCard(
-                    row: rows[i],
-                    dateFmt: df,
-                    onEndedTap: () => _editEndedBilling(rows[i]),
-                    onActiveHint: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'End active rentals from the Active tab so times and fees stay accurate.',
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
+            child: _historyBody(context, theme, cs, df, pad),
           ),
         ),
       ],
+      ),
+    );
+  }
+
+  Widget _historyBody(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme cs,
+    DateFormat df,
+    EdgeInsets pad,
+  ) {
+    if (_rows == null && _error != null) {
+      return ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Icon(Icons.error_outline, size: 48, color: cs.error),
+          const SizedBox(height: 12),
+          Text(_error.toString()),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _refresh,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
+        ],
+      );
+    }
+    if (_rows == null) {
+      return ListView(
+        children: const [
+          SizedBox(height: 120),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+    final rows = _rows!;
+    if (rows.isEmpty) {
+      return ListView(
+        children: [
+          SizedBox(
+            height: 280,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.history_rounded,
+                    size: 56,
+                    color: cs.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No rentals match this filter.',
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(pad.left, 0, pad.right, pad.bottom),
+      itemCount: rows.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (context, i) => _HistoryRentalCard(
+        key: ValueKey(rows[i].rental.id),
+        row: rows[i],
+        dateFmt: df,
+        onEndedTap: () => _editEndedBilling(rows[i]),
+        onActiveHint: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'End active rentals from the Active tab so times and fees stay accurate.',
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -230,6 +270,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab> {
 
 class _HistoryRentalCard extends StatefulWidget {
   const _HistoryRentalCard({
+    super.key,
     required this.row,
     required this.dateFmt,
     required this.onEndedTap,
@@ -248,13 +289,16 @@ class _HistoryRentalCard extends StatefulWidget {
 class _HistoryRentalCardState extends State<_HistoryRentalCard> {
   bool _expanded = false;
 
-  Color _statusColor(String status, ColorScheme cs) => switch (status) {
-        'ended' => const Color(0xFF16A34A),
+  Color _statusColor(String status, ColorScheme cs) {
+    final dark = cs.brightness == Brightness.dark;
+    return switch (status) {
+        'ended' => dark ? const Color(0xFF4ADE80) : const Color(0xFF16A34A),
         'active' => cs.primary,
-        'pending' => const Color(0xFFD97706),
+        'pending' => dark ? const Color(0xFFFBBF24) : const Color(0xFFD97706),
         'rejected' => cs.error,
         _ => cs.onSurfaceVariant,
       };
+  }
 
   String _statusLabel(String status) => switch (status) {
         'ended' => 'Ended',
@@ -365,8 +409,18 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                         row.riderDisplay,
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
+                          color: cs.onSurface,
                         ),
                       ),
+                      if (row.riderUsername != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          row.riderUsername!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 2),
                       Text(
                         row.bikeDisplay,
@@ -522,7 +576,9 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                             label: 'Overtime',
                             valueColor: otMin > 0
                                 ? cs.error
-                                : const Color(0xFF16A34A),
+                                : (cs.brightness == Brightness.dark
+                                    ? const Color(0xFF4ADE80)
+                                    : const Color(0xFF16A34A)),
                             value: otMin > 0
                                 ? '${otMin.ceil()} min beyond plan'
                                 : 'None (on time or early)',
@@ -740,6 +796,13 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
                 fontWeight: FontWeight.w800,
               ),
             ),
+            if (widget.row.riderUsername != null)
+              Text(
+                widget.row.riderUsername!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
             Text(
               widget.row.bikeDisplay,
               style: theme.textTheme.bodySmall?.copyWith(

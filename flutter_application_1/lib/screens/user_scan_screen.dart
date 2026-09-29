@@ -12,6 +12,7 @@ import '../services/kyc_repository.dart';
 import '../services/rental_repository.dart';
 import '../utils/location_access.dart';
 import '../utils/network_errors.dart';
+import '../widgets/bike_photo.dart';
 import '../widgets/qride_brand.dart';
 import '../widgets/user_portal_chrome.dart';
 
@@ -393,17 +394,13 @@ class _UserScanScreenState extends State<UserScanScreen>
   /// Shows a bottom sheet for the rider to choose rental duration.
   /// Returns the chosen number of minutes, or null if cancelled.
   Future<int?> _showDurationPicker(Bike bike) async {
-    final bikeLabel = bike.label?.trim().isNotEmpty == true
-        ? '${bike.label} (${bike.code})'
-        : 'Bike ${bike.code}';
-
     return showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => _DurationPickerSheet(bikeLabel: bikeLabel),
+      builder: (ctx) => _DurationPickerSheet(bike: bike),
     );
   }
 

@@ -26,6 +26,7 @@ ColorScheme qrideLightScheme() {
     tertiaryContainer: const Color(0xFFD6EBFF),
     surface: Colors.white,
     onSurface: const Color(0xFF111827),
+    onSurfaceVariant: const Color(0xFF4B5C70),
     surfaceContainerHighest: const Color(0xFFE8F1FA),
     outline: const Color(0xFFC5D4E4),
     outlineVariant: const Color(0xFFD7E3EF),
@@ -53,9 +54,10 @@ ColorScheme qrideDarkScheme() {
     tertiaryContainer: const Color(0xFF163A5C),
     surface: QrideBrand.night,
     onSurface: const Color(0xFFE8EEF6),
-    surfaceContainerHighest: const Color(0xFF1A2433),
-    outline: const Color(0xFF3D4F66),
-    outlineVariant: const Color(0xFF2A384C),
+    onSurfaceVariant: const Color(0xFFC5D0DE),
+    surfaceContainerHighest: const Color(0xFF1E2A3C),
+    outline: const Color(0xFF4A5F78),
+    outlineVariant: const Color(0xFF33465C),
     error: const Color(0xFFFF8A80),
     onError: const Color(0xFF3B0000),
   );
@@ -142,6 +144,8 @@ ThemeData qrideTheme(ColorScheme cs) => ThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       dialogTheme: DialogThemeData(
+        backgroundColor: cs.surface,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       ),
       bottomSheetTheme: const BottomSheetThemeData(

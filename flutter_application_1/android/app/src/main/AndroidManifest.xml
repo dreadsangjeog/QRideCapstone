@@ -6,13 +6,14 @@
         android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- No ACCESS_BACKGROUND_LOCATION: while-using + rental FGS is enough.
+         Declaring background location makes Android offer “Allow all the time”. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Local notifications (required for Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
@@ -46,12 +47,20 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        <!-- Keeps GPS running when the rider switches apps or leaves QRide. -->
+        <!-- Optional Geolocator service (UI stream). Background uploads use
+             flutter_foreground_task ForegroundService below. -->
         <service
             android:name="com.baseflow.geolocator.GeolocatorLocationService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location"
+            android:stopWithTask="false" />
+        <!-- Primary: keeps GPS → admin map alive when screen is locked or
+             rider leaves QRide (active rental only). -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="location"
+            android:exported="false"
             android:stopWithTask="false" />
     </application>
     <!-- Required to query activities that can process text, see:

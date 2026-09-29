@@ -32,6 +32,70 @@ class _BikesTabState extends State<_BikesTab> {
     if (refresh == true && mounted) await _refresh();
   }
 
+  Future<void> _confirmDeleteBike(Bike bike) async {
+    final name = bike.label?.trim().isNotEmpty == true
+        ? bike.label!.trim()
+        : 'Bike ${bike.code}';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          icon: Icon(Icons.delete_forever_rounded, color: cs.error),
+          title: const Text('Delete this bike?'),
+          content: Text(
+            'Remove $name (${bike.code}) from the fleet permanently.\n\n'
+            'You cannot delete it while a rental is pending or active. '
+            'Past rental history stays in reports as “Removed bike”.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: cs.error,
+                foregroundColor: cs.onError,
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete bike'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await widget.repo.deleteBike(bike);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$name deleted')),
+      );
+      await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_friendlyDeleteError(e))),
+      );
+    }
+  }
+
+  String _friendlyDeleteError(Object e) {
+    final s = e.toString();
+    if (s.contains('pending or active') || s.contains('open rental')) {
+      return 'End or reject the open rental on this bike before deleting it.';
+    }
+    if (s.contains('rented') || s.contains('End the active rental')) {
+      return 'This bike is rented. End the rental first.';
+    }
+    if (s.contains('admin_delete_bike') || s.contains('PGRST202')) {
+      return 'Delete is not set up on the database yet. Run migration 034_admin_delete_bike.sql in Supabase.';
+    }
+    return 'Could not delete bike: $e';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -93,7 +157,7 @@ class _BikesTabState extends State<_BikesTab> {
                       AdminPageHeader(
                         title: 'Bikes',
                         subtitle:
-                            '${bikes.length} in the fleet · tap the menu to set maintenance',
+                            '${bikes.length} in the fleet · menu to set maintenance or delete',
                         trailing: wide
                             ? FilledButton.icon(
                                 onPressed: () => _openQrGenerator(),
@@ -143,6 +207,16 @@ class _BikesTabState extends State<_BikesTab> {
                               _BikeCard(
                                 bike: bike,
                                 onQr: () => _openQrGenerator(bike: bike),
+                                onPhotoTap: () async {
+                                  final updated = await showBikePhotoEditor(
+                                    context,
+                                    repo: widget.repo,
+                                    bike: bike,
+                                  );
+                                  if (updated != null && context.mounted) {
+                                    await _refresh();
+                                  }
+                                },
                                 onStatusChange: (status) async {
                                   await widget.repo.updateBikeStatus(
                                     bikeId: bike.id,
@@ -156,6 +230,7 @@ class _BikesTabState extends State<_BikesTab> {
                                   );
                                   await _refresh();
                                 },
+                                onDelete: () => _confirmDeleteBike(bike),
                               ),
                           ],
                         ),
@@ -187,15 +262,26 @@ class _ActiveRentalsTab extends StatefulWidget {
   State<_ActiveRentalsTab> createState() => _ActiveRentalsTabState();
 }
 
-class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
-  late Future<List<RentalWithBike>> _future = widget.repo.fetchActiveRentalsWithBikes();
+class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
+    with AdminSilentReload, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+  List<RentalWithBike>? _rows;
+  Object? _error;
   Timer? _poll;
+  Timer? _clock;
+  Timer? _coalesce;
 
   @override
   void initState() {
     super.initState();
     widget.changes?.addListener(_onLive);
-    _poll = Timer.periodic(const Duration(seconds: 10), (_) => _onLive());
+    unawaited(_refresh());
+    _poll = Timer.periodic(const Duration(seconds: 45), (_) => _onLive());
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_rows != null && _rows!.isNotEmpty) setState(() {});
+    });
   }
 
   @override
@@ -211,18 +297,34 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
   void dispose() {
     widget.changes?.removeListener(_onLive);
     _poll?.cancel();
+    _clock?.cancel();
+    _coalesce?.cancel();
     super.dispose();
   }
 
   void _onLive() {
-    if (mounted) unawaited(_refresh());
+    _coalesce?.cancel();
+    _coalesce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) unawaited(_refresh());
+    });
   }
 
   Future<void> _refresh() async {
-    setState(() {
-      _future = widget.repo.fetchActiveRentalsWithBikes();
+    await silentReload(() async {
+      try {
+        final rows = await widget.repo.fetchActiveRentalsWithBikes();
+        if (!mounted) return;
+        setState(() {
+          _rows = rows;
+          _error = null;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          if (_rows == null) _error = e;
+        });
+      }
     });
-    await _future;
   }
 
   Future<void> _endRental(RentalWithBike row) async {
@@ -298,24 +400,23 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     return RefreshIndicator(
       onRefresh: _refresh,
-      child: FutureBuilder<List<RentalWithBike>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
+      child: Builder(builder: (context) {
+          if (_rows == null && _error != null) {
             return _ErrorState(
               title: 'Could not load active rentals',
-              error: snapshot.error,
+              error: _error,
               onRetry: _refresh,
             );
           }
-          final rentals = snapshot.data ?? const <RentalWithBike>[];
+          if (_rows == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final rentals = _rows!;
           if (rentals.isEmpty) {
             return _EmptyState(
               icon: Icons.play_circle_outline,
@@ -352,7 +453,9 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
                       spacing: 12,
                       children: [
                         for (final row in rentals)
-                          Builder(builder: (context) {
+                          KeyedSubtree(
+                            key: ValueKey(row.rental.id),
+                            child: Builder(builder: (context) {
               final r = row.rental;
               // For stale rentals without an approved_at, the timer is meaningless.
               // We still show the row so admin can end it, but don't compute overtime.
@@ -513,6 +616,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
                   ),
               );
                           }),
+                          ),
                       ],
                     ),
                   ],
@@ -520,8 +624,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab> {
               ),
             ],
           );
-        },
-      ),
+        }),
     );
   }
 }

@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../widgets/qride_glass.dart';
+
 /// Desktop / web breakpoint for the admin console.
 bool adminWide(BuildContext context) => MediaQuery.sizeOf(context).width >= 900;
 
@@ -24,11 +26,13 @@ Future<T?> showAdminPage<T>(
       return Dialog(
         insetPadding: const EdgeInsets.all(24),
         clipBehavior: Clip.antiAlias,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: SizedBox(
           width: math.min(maxWidth, size.width - 48),
           height: math.min(size.height * 0.9, 920),
-          child: builder(ctx),
+          child: AdminGlassScene(child: builder(ctx)),
         ),
       );
     },
@@ -223,5 +227,28 @@ class AdminSortToggle extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Reloads list data without blanking the current rows. Queues a follow-up
+/// fetch if another live event arrives while one is already in flight.
+mixin AdminSilentReload<T extends StatefulWidget> on State<T> {
+  bool _silentBusy = false;
+  bool _silentQueued = false;
+
+  Future<void> silentReload(Future<void> Function() fetch) async {
+    if (_silentBusy) {
+      _silentQueued = true;
+      return;
+    }
+    _silentBusy = true;
+    try {
+      do {
+        _silentQueued = false;
+        await fetch();
+      } while (_silentQueued && mounted);
+    } finally {
+      _silentBusy = false;
+    }
   }
 }

@@ -1,4 +1,7 @@
 import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/bike.dart';
 import '../models/rental.dart';
@@ -8,17 +11,31 @@ import 'supabase_client.dart';
 
 class AdminRepository {
   Future<List<Bike>> fetchBikes() async {
-    final rows = await SupabaseClientProvider.client
-        .from('bikes')
-        .select()
-        .order('code', ascending: true);
-    final bikes = (rows as List<dynamic>)
-        .map((e) => Bike.fromJson(e as Map<String, dynamic>))
-        .toList();
-    bikes.sort(
-      (a, b) => a.code.toLowerCase().compareTo(b.code.toLowerCase()),
-    );
-    return bikes;
+    List<Bike> parse(dynamic rows) {
+      final bikes = (rows as List<dynamic>)
+          .map((e) => Bike.fromJson(e as Map<String, dynamic>))
+          .toList();
+      bikes.sort(
+        (a, b) => a.code.toLowerCase().compareTo(b.code.toLowerCase()),
+      );
+      return bikes;
+    }
+
+    try {
+      final rows = await SupabaseClientProvider.client
+          .from('bikes')
+          .select()
+          .order('code', ascending: true);
+      return parse(rows);
+    } catch (e) {
+      final s = e.toString();
+      if (!s.contains('photo_path') && !s.contains('42703')) rethrow;
+      final rows = await SupabaseClientProvider.client
+          .from('bikes')
+          .select('id, code, label, status, created_at')
+          .order('code', ascending: true);
+      return parse(rows);
+    }
   }
 
   /// Proposes a random bike code (`BIKE-` + 6 chars) and checks Supabase until unused.
@@ -91,6 +108,100 @@ class AdminRepository {
     return Bike.fromJson(Map<String, dynamic>.from(row));
   }
 
+  static const photoBucket = 'bike-photos';
+
+  /// Public URL for a stored bike photo, or null when none.
+  static String? publicPhotoUrl(String? path) {
+    final p = (path ?? '').trim();
+    if (p.isEmpty) return null;
+    return SupabaseClientProvider.client.storage
+        .from(photoBucket)
+        .getPublicUrl(p);
+  }
+
+  /// Uploads (or replaces) the photo for [bikeId]. Returns the updated bike.
+  Future<Bike> uploadBikePhoto({
+    required String bikeId,
+    required Uint8List bytes,
+    String? previousPath,
+  }) async {
+    if (bytes.isEmpty) {
+      throw StateError('Choose a photo first.');
+    }
+    if (bytes.lengthInBytes > 8 * 1024 * 1024) {
+      throw StateError('Use a photo smaller than 8 MB.');
+    }
+    final path = '$bikeId/photo-${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final storage = SupabaseClientProvider.client.storage.from(photoBucket);
+    await storage.uploadBinary(
+      path,
+      bytes,
+      fileOptions: const FileOptions(
+        upsert: true,
+        contentType: 'image/jpeg',
+      ),
+    );
+    final row = await SupabaseClientProvider.client
+        .from('bikes')
+        .update({'photo_path': path})
+        .eq('id', bikeId)
+        .select()
+        .single();
+    final old = (previousPath ?? '').trim();
+    if (old.isNotEmpty && old != path) {
+      try {
+        await storage.remove([old]);
+      } catch (_) {}
+    }
+    return Bike.fromJson(Map<String, dynamic>.from(row));
+  }
+
+  /// Removes the stored photo for [bikeId].
+  Future<Bike> removeBikePhoto({
+    required String bikeId,
+    String? previousPath,
+  }) async {
+    final old = (previousPath ?? '').trim();
+    if (old.isNotEmpty) {
+      try {
+        await SupabaseClientProvider.client.storage
+            .from(photoBucket)
+            .remove([old]);
+      } catch (_) {}
+    }
+    final row = await SupabaseClientProvider.client
+        .from('bikes')
+        .update({'photo_path': null})
+        .eq('id', bikeId)
+        .select()
+        .single();
+    return Bike.fromJson(Map<String, dynamic>.from(row));
+  }
+
+  /// Permanently deletes a bike from the fleet.
+  ///
+  /// Blocked while the bike has a pending or active rental. Ended history is
+  /// kept; the bike link on those rows is cleared.
+  Future<void> deleteBike(Bike bike) async {
+    if (bike.status == 'rented') {
+      throw Exception(
+        'This bike is rented. End the active rental before deleting it.',
+      );
+    }
+    final path = (bike.photoPath ?? '').trim();
+    await SupabaseClientProvider.client.rpc(
+      'admin_delete_bike',
+      params: {'p_bike_id': bike.id},
+    );
+    if (path.isNotEmpty) {
+      try {
+        await SupabaseClientProvider.client.storage
+            .from(photoBucket)
+            .remove([path]);
+      } catch (_) {}
+    }
+  }
+
   Future<List<Rental>> fetchActiveRentals() async {
     final rows = await SupabaseClientProvider.client
         .from('rentals')
@@ -106,7 +217,9 @@ class AdminRepository {
   Future<List<RentalWithBike>> fetchActiveRentalsWithBikes() async {
     final rows = await SupabaseClientProvider.client
         .from('rentals')
-        .select('*, bikes(*), profiles(username)')
+        .select(
+          '*, bikes(*), profiles(username, first_name, middle_name, last_name)',
+        )
         .eq('status', 'active')
         .order('approved_at', ascending: false);
     return (rows as List<dynamic>)
@@ -121,7 +234,9 @@ class AdminRepository {
   }) async {
     var q = SupabaseClientProvider.client
         .from('rentals')
-        .select('*, bikes(*), profiles(username)');
+        .select(
+          '*, bikes(*), profiles(username, first_name, middle_name, last_name)',
+        );
     if (status != null && status.isNotEmpty) {
       q = q.eq('status', status);
     }
@@ -135,7 +250,9 @@ class AdminRepository {
   Future<List<RentalWithBike>> fetchPendingRentals() async {
     final rows = await SupabaseClientProvider.client
         .from('rentals')
-        .select('*, bikes(*), profiles(username)')
+        .select(
+          '*, bikes(*), profiles(username, first_name, middle_name, last_name)',
+        )
         .eq('status', 'pending')
         .order('started_at', ascending: true);
     return (rows as List<dynamic>)
@@ -231,7 +348,9 @@ class AdminRepository {
     // Step 1: get IDs of all active rentals plus their bike + rider info.
     final activeRentals = await SupabaseClientProvider.client
         .from('rentals')
-        .select('id, bikes(code, label), profiles(username)')
+        .select(
+          'id, bikes(code, label), profiles(username, first_name, middle_name, last_name)',
+        )
         .eq('status', 'active');
 
     if ((activeRentals as List).isEmpty) return [];

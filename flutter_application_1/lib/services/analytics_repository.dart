@@ -138,7 +138,7 @@ class AnalyticsRepository {
         .select(
           'id, bike_id, user_id, status, started_at, ended_at, approved_at, '
           'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
-          'bikes(code, label), profiles(username)',
+          'bikes(code, label), profiles(username, first_name, middle_name, last_name)',
         )
         .or('ended_at.gte."$fromIso",status.eq.pending,status.eq.active')
         .order('ended_at', nullsFirst: false);
@@ -192,8 +192,9 @@ class AnalyticsRepository {
         durationBuckets[bucket] = durationBuckets[bucket]! + 1;
       }
 
-      final prev = bikes[r.bikeId];
-      bikes[r.bikeId] = (
+      final bikeKey = r.bikeId ?? 'removed';
+      final prev = bikes[bikeKey];
+      bikes[bikeKey] = (
         name: row.bikeDisplay,
         rides: (prev?.rides ?? 0) + 1,
         collected: (prev?.collected ?? 0) + amount,

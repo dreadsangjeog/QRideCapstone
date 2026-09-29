@@ -182,7 +182,7 @@ class PortalSectionLabel extends StatelessWidget {
       child: Text(
         text.toUpperCase(),
         style: theme.textTheme.labelMedium?.copyWith(
-          color: cs.onSurfaceVariant,
+          color: cs.onSurface.withValues(alpha: 0.78),
           fontWeight: FontWeight.w800,
           letterSpacing: 0.8,
         ),

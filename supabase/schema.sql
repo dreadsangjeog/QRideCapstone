@@ -17,12 +17,13 @@ create table if not exists public.bikes (
   code text not null unique,
   label text,
   status text not null default 'available' check (status in ('available','rented','maintenance')),
+  photo_path text,
   created_at timestamptz not null default now()
 );
 
 create table if not exists public.rentals (
   id uuid primary key default gen_random_uuid(),
-  bike_id uuid not null references public.bikes(id),
+  bike_id uuid references public.bikes(id) on delete set null,
   user_id uuid not null references auth.users(id),
   status text not null default 'active' check (status in ('active','ended')),
   started_at timestamptz not null default now(),
@@ -256,6 +257,43 @@ create policy "bikes_delete_admin"
   on public.bikes for delete
   to authenticated
   using (public.is_admin());
+
+create or replace function public.admin_delete_bike(p_bike_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null or not public.is_admin() then
+    raise exception 'Only administrators can delete bikes';
+  end if;
+
+  if not exists (select 1 from public.bikes where id = p_bike_id) then
+    raise exception 'Bike not found';
+  end if;
+
+  if exists (
+    select 1
+    from public.rentals
+    where bike_id = p_bike_id
+      and status in ('pending', 'active')
+  ) then
+    raise exception
+      'Cannot delete this bike while a rental is pending or active. End or reject that rental first.';
+  end if;
+
+  update public.rentals
+  set bike_id = null
+  where bike_id = p_bike_id;
+
+  delete from public.bikes
+  where id = p_bike_id;
+end;
+$$;
+
+revoke all on function public.admin_delete_bike(uuid) from public;
+grant execute on function public.admin_delete_bike(uuid) to authenticated;
 
 -- rentals
 drop policy if exists "rentals_select_own_or_admin" on public.rentals;

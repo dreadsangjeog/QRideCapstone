@@ -11,9 +11,10 @@ import 'supabase_client.dart';
 /// Streams GPS + compass during an active rental and writes to Supabase
 /// (`rental_last_location` upsert + `rental_locations` history insert).
 ///
-/// The rider map updates as soon as GPS reports movement. Uploads to the
-/// server (admin map) are throttled to about every 3 seconds to save battery
-/// and data.
+/// Used while QRide is open for the rider UI. Background / screen-off uploads
+/// are owned by RideForegroundTask so there is only one persistent notice.
+///
+/// Server uploads (admin map) are throttled to about every 3 seconds.
 ///
 /// GPS bearing only updates while moving. Phone rotation while standing still
 /// comes from the device compass so the admin map pin can turn in place.
@@ -62,7 +63,10 @@ class LocationTrackingService {
   static const Duration _streamStall = Duration(seconds: 12);
 
   /// Backup GPS poll. Network uploads are throttled separately via [minInterval].
-  static const Duration _pollEvery = Duration(seconds: 5);
+  static const Duration _pollEvery = Duration(seconds: 3);
+
+  /// True while an active rental is being tracked in this isolate.
+  bool get isTracking => _rentalId != null;
 
   /// Ensures location service is on and permission is granted.
   Future<void> ensurePermissions() async {
@@ -88,16 +92,15 @@ class LocationTrackingService {
       );
     }
 
-    // Android 13+: the persistent "Rental in progress" notice must be allowed
-    // or the foreground GPS service is killed in the background.
+    // Android 13+: RideForegroundTask needs notifications to stay alive.
     final notify = await Permission.notification.status;
     if (notify.isDenied) {
       await Permission.notification.request();
     }
-
   }
 
-  /// Screen locked or QRide sent to background — keep sharing, do not stop.
+  /// Screen locked or QRide sent to background — keep last fix warm.
+  /// Durable uploads continue via RideForegroundTask.
   Future<void> keepSharingWithScreenOff() async {
     if (_rentalId == null) return;
     final pos = _lastPosition;
@@ -113,6 +116,17 @@ class LocationTrackingService {
     if (pos != null) unawaited(_attemptWrite(pos, force: true));
   }
 
+  /// Marks that the background FG isolate successfully wrote a fix (UI freshness).
+  void noteExternalWrite({double? heading}) {
+    if (_rentalId == null) return;
+    lastWriteAt.value = DateTime.now();
+    lastError.value = null;
+    if (heading != null && !heading.isNaN && heading >= 0 && heading <= 360) {
+      _lastGoodHeading = heading;
+      _publishHeading(heading);
+    }
+  }
+
   LocationSettings _locationSettings({bool forceAndroidManager = false}) {
     if (defaultTargetPlatform == TargetPlatform.iOS) {
       return AppleSettings(
@@ -123,21 +137,14 @@ class LocationTrackingService {
         pauseLocationUpdatesAutomatically: false,
       );
     }
-    // Stream stays frequent so the rider map moves as soon as GPS reports
-    // movement. Uploads to Supabase are throttled by [_minInterval] (~3s).
+    // No ForegroundNotificationConfig here — RideForegroundTask owns the
+    // single “Rental in progress” notice and background uploads.
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 0,
         forceLocationManager: forceAndroidManager,
         intervalDuration: const Duration(seconds: 1),
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationText:
-              'Sharing bike location. Stays on if you leave QRide or lock the phone.',
-          notificationTitle: 'Rental in progress',
-          enableWakeLock: true,
-          setOngoing: true,
-        ),
       );
     }
     return const LocationSettings(

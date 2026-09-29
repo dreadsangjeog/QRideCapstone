@@ -41,13 +41,6 @@ Color _statusColor(String status, ColorScheme cs) => switch (status) {
       _             => cs.onSurfaceVariant,
     };
 
-IconData _statusIcon(String status) => switch (status) {
-      'available'   => Icons.check_circle_rounded,
-      'rented'      => Icons.directions_bike_rounded,
-      'maintenance' => Icons.build_rounded,
-      _             => Icons.help_outline,
-    };
-
 // ── Bike card ───────────────────────────────────────────────────────────────
 
 class _BikeCard extends StatelessWidget {
@@ -55,11 +48,15 @@ class _BikeCard extends StatelessWidget {
     required this.bike,
     required this.onQr,
     required this.onStatusChange,
+    required this.onPhotoTap,
+    required this.onDelete,
   });
 
   final Bike bike;
   final VoidCallback onQr;
   final ValueChanged<String> onStatusChange;
+  final VoidCallback onPhotoTap;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -69,6 +66,7 @@ class _BikeCard extends StatelessWidget {
     final name = bike.label?.trim().isNotEmpty == true
         ? bike.label!
         : 'Bike ${bike.code}';
+    final canDelete = bike.status != 'rented';
 
     return GlassPanel(
       radius: 20,
@@ -83,18 +81,51 @@ class _BikeCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 child: Row(
                   children: [
-                    // Bike icon avatar
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.12),
+                    // Bike photo (tap to upload / replace)
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: onPhotoTap,
                         borderRadius: BorderRadius.circular(13),
-                      ),
-                      child: Icon(
-                        _statusIcon(bike.status),
-                        color: color,
-                        size: 24,
+                        child: Tooltip(
+                          message: bike.hasPhoto
+                              ? 'Update bike photo'
+                              : 'Upload bike photo',
+                          child: Stack(
+                            children: [
+                              BikePhotoView(
+                                url: AdminRepository.publicPhotoUrl(
+                                  bike.photoPath,
+                                ),
+                                size: 46,
+                                radius: 13,
+                              ),
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  width: 18,
+                                  height: 18,
+                                  decoration: BoxDecoration(
+                                    color: cs.primary,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: cs.surface,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    bike.hasPhoto
+                                        ? Icons.edit_rounded
+                                        : Icons.add_rounded,
+                                    size: 11,
+                                    color: cs.onPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 13),
@@ -139,9 +170,11 @@ class _BikeCard extends StatelessWidget {
                                 foregroundColor: cs.primary,
                               ),
                             ),
-                            _StatusMenu(
+                            _BikeActionsMenu(
                               status: bike.status,
-                              onSelected: onStatusChange,
+                              canDelete: canDelete,
+                              onStatusChange: onStatusChange,
+                              onDelete: onDelete,
                             ),
                           ],
                         ),
@@ -243,45 +276,106 @@ class _StatusFilterBar extends StatelessWidget {
   }
 }
 
-// ── Status change menu ───────────────────────────────────────────────────────
+// ── Bike actions menu (status + delete) ───────────────────────────────────────
 
-class _StatusMenu extends StatelessWidget {
-  const _StatusMenu({required this.status, required this.onSelected});
+class _BikeActionsMenu extends StatelessWidget {
+  const _BikeActionsMenu({
+    required this.status,
+    required this.canDelete,
+    required this.onStatusChange,
+    required this.onDelete,
+  });
 
   final String status;
-  final ValueChanged<String> onSelected;
+  final bool canDelete;
+  final ValueChanged<String> onStatusChange;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      child: PopupMenuButton<String>(
-      tooltip: 'Change status',
-      onSelected: onSelected,
-      icon: Icon(Icons.more_vert_rounded, size: 20, color: cs.onSurfaceVariant),
-      itemBuilder: (context) => [
-        _menuItem('available',   'Available',   Icons.check_circle_rounded, const Color(0xFF22C55E)),
-        _menuItem('maintenance', 'Maintenance', Icons.build_rounded, cs.error),
-      ],
+      child: PopupMenuButton<_BikeMenuAction>(
+        tooltip: 'Bike actions',
+        onSelected: (action) {
+          switch (action) {
+            case _BikeMenuAction.available:
+              onStatusChange('available');
+            case _BikeMenuAction.maintenance:
+              onStatusChange('maintenance');
+            case _BikeMenuAction.delete:
+              onDelete();
+          }
+        },
+        icon: Icon(Icons.more_vert_rounded, size: 20, color: cs.onSurfaceVariant),
+        itemBuilder: (context) => [
+          _statusItem(
+            _BikeMenuAction.available,
+            'Available',
+            Icons.check_circle_rounded,
+            const Color(0xFF22C55E),
+            selected: status == 'available',
+          ),
+          _statusItem(
+            _BikeMenuAction.maintenance,
+            'Maintenance',
+            Icons.build_rounded,
+            cs.error,
+            selected: status == 'maintenance',
+          ),
+          const PopupMenuDivider(),
+          PopupMenuItem<_BikeMenuAction>(
+            value: _BikeMenuAction.delete,
+            enabled: canDelete,
+            child: Row(
+              children: [
+                Icon(
+                  Icons.delete_outline_rounded,
+                  color: canDelete ? cs.error : cs.onSurfaceVariant,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  canDelete ? 'Delete bike' : 'End rental to delete',
+                  style: TextStyle(
+                    color: canDelete ? cs.error : cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  PopupMenuItem<String> _menuItem(
-      String value, String label, IconData icon, Color color) {
-    return PopupMenuItem<String>(
+  PopupMenuItem<_BikeMenuAction> _statusItem(
+    _BikeMenuAction value,
+    String label,
+    IconData icon,
+    Color color, {
+    required bool selected,
+  }) {
+    return PopupMenuItem<_BikeMenuAction>(
       value: value,
       child: Row(
         children: [
           Icon(icon, color: color, size: 18),
           const SizedBox(width: 10),
-          Text(label),
+          Expanded(child: Text(label)),
+          if (selected)
+            Icon(Icons.check_rounded, size: 16, color: color),
         ],
       ),
     );
   }
 }
+
+enum _BikeMenuAction { available, maintenance, delete }
+
+// ── Empty / error states (shared) ─────────────────────────────────────────────
 
 class _RentalDetailDialog extends StatelessWidget {
   const _RentalDetailDialog({
@@ -301,7 +395,9 @@ class _RentalDetailDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final loc = location;
     final bikeLine = bike == null
-        ? rental.bikeId
+        ? ((rental.bikeId == null || rental.bikeId!.isEmpty)
+            ? 'Removed bike'
+            : rental.bikeId!)
         : (bike!.label?.trim().isNotEmpty == true
             ? '${bike!.label} (${bike!.code})'
             : bike!.code);

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app/app_shell.dart';
@@ -12,12 +13,15 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/user_root_shell.dart';
 import 'services/notification_service.dart';
+import 'services/ride_foreground_task.dart';
 import 'theme/app_theme.dart';
 import 'theme/login_season.dart';
 import 'theme/theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Port for FG task ↔ UI (needed before runApp on Android).
+  if (!kIsWeb) FlutterForegroundTask.initCommunicationPort();
   try {
     await loadSavedThemeMode();
     await loadCachedLoginSeason();
@@ -30,6 +34,7 @@ Future<void> main() async {
       ),
     );
     await NotificationService.init();
+    if (!kIsWeb) RideForegroundTask.init();
     await syncLoginSeason();
     await NotificationService.requestPermission();
     runApp(const QRideApp());

@@ -253,6 +253,12 @@ class _ReportsBody extends StatelessWidget {
                 selected: days == d,
                 showCheckmark: false,
                 selectedColor: QrideBrand.accent,
+                backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.72),
+                side: BorderSide(
+                  color: days == d
+                      ? QrideBrand.accent
+                      : cs.outlineVariant.withValues(alpha: 0.7),
+                ),
                 labelStyle: TextStyle(
                   color: days == d ? Colors.white : cs.onSurface,
                   fontWeight: FontWeight.w700,
@@ -353,8 +359,9 @@ class _SoftKpi extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final ink = dark ? Color.lerp(color, Colors.white, 0.42)! : color;
     return GlassPanel(
-      tint: dark ? color.withValues(alpha: 0.18) : wash.withValues(alpha: 0.55),
+      tint: dark ? color.withValues(alpha: 0.22) : wash.withValues(alpha: 0.55),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -362,7 +369,7 @@ class _SoftKpi extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              color: color.withValues(alpha: 0.86),
+              color: ink.withValues(alpha: 0.9),
               fontWeight: FontWeight.w700,
               fontSize: 13,
             ),
@@ -374,7 +381,7 @@ class _SoftKpi extends StatelessWidget {
             child: Text(
               value,
               style: TextStyle(
-                color: color,
+                color: ink,
                 fontWeight: FontWeight.w900,
                 fontSize: 30,
                 height: 1,

@@ -6,6 +6,9 @@ import '../../models/bike.dart';
 import '../../services/admin_repository.dart';
 import '../../services/auth_service.dart';
 import '../../utils/bike_qr_payload.dart';
+import '../../widgets/bike_photo.dart';
+import '../../widgets/login_scene_backdrop.dart';
+import '../../widgets/qride_glass.dart';
 import 'admin_layout.dart';
 
 class AdminGenerateQrScreen extends StatefulWidget {
@@ -37,6 +40,9 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
   bool _committed = false;
   bool _adminGatePassed = false;
   bool _generatingCode = false;
+  Bike? _bike;
+  Uint8List? _pendingPhoto;
+  bool _photoBusy = false;
 
   bool get _isExisting => widget.initialBike != null;
 
@@ -47,6 +53,7 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
     _codeCtrl = TextEditingController(text: b?.code ?? '');
     _labelCtrl = TextEditingController(text: b?.label ?? '');
     _status = b?.status ?? 'available';
+    _bike = b;
 
     if (b != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -113,13 +120,22 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
 
     setState(() => _busy = true);
     try {
-      await widget.repo.createBike(
+      final created = await widget.repo.createBike(
         code: code,
         label: label,
         status: _status,
       );
+      Bike saved = created;
+      if (_pendingPhoto != null) {
+        saved = await widget.repo.uploadBikePhoto(
+          bikeId: created.id,
+          bytes: _pendingPhoto!,
+        );
+      }
       if (!mounted) return;
       setState(() {
+        _bike = saved;
+        _pendingPhoto = null;
         _committed = true;
         _payload = bikeQrPayloadFromCode(code);
         _refreshListOnPop = true;
@@ -191,6 +207,68 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
     }
   }
 
+  Future<void> _pickPhoto() async {
+    final bytes = await pickBikePhotoBytes();
+    if (bytes == null || !mounted) return;
+    final saved = _bike;
+    if (saved == null) {
+      setState(() {
+        _pendingPhoto = bytes;
+        _refreshListOnPop = true;
+      });
+      return;
+    }
+    setState(() => _photoBusy = true);
+    try {
+      final updated = await widget.repo.uploadBikePhoto(
+        bikeId: saved.id,
+        bytes: bytes,
+        previousPath: saved.photoPath,
+      );
+      if (!mounted) return;
+      setState(() {
+        _bike = updated;
+        _pendingPhoto = null;
+        _refreshListOnPop = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save photo. $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _photoBusy = false);
+    }
+  }
+
+  Future<void> _removePhoto() async {
+    final saved = _bike;
+    if (saved == null) {
+      setState(() => _pendingPhoto = null);
+      return;
+    }
+    setState(() => _photoBusy = true);
+    try {
+      final updated = await widget.repo.removeBikePhoto(
+        bikeId: saved.id,
+        previousPath: saved.photoPath,
+      );
+      if (!mounted) return;
+      setState(() {
+        _bike = updated;
+        _pendingPhoto = null;
+        _refreshListOnPop = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not remove photo. $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _photoBusy = false);
+    }
+  }
+
   Future<void> _copyPayload() async {
     final p = _payload;
     if (p == null || p.isEmpty) return;
@@ -201,27 +279,122 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
     );
   }
 
+  Widget _photoField(ThemeData theme, ColorScheme cs) {
+    final url = AdminRepository.publicPhotoUrl(_bike?.photoPath);
+    final hasLocal = _pendingPhoto != null;
+    final hasPhoto = hasLocal || (_bike?.hasPhoto ?? false);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            BikePhotoView(
+              url: hasLocal ? null : url,
+              bytes: _pendingPhoto,
+              size: 72,
+              radius: 12,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bike photo',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    hasPhoto
+                        ? 'Shown to staff and to riders when they scan.'
+                        : 'Optional. Helps staff and riders recognize this bike.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: (_busy || _photoBusy) ? null : _pickPhoto,
+                        icon: _photoBusy
+                            ? SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: cs.primary,
+                                ),
+                              )
+                            : Icon(
+                                hasPhoto
+                                    ? Icons.sync_rounded
+                                    : Icons.add_photo_alternate_outlined,
+                                size: 18,
+                              ),
+                        label: Text(hasPhoto ? 'Replace' : 'Upload'),
+                      ),
+                      if (hasPhoto)
+                        TextButton(
+                          onPressed:
+                              (_busy || _photoBusy) ? null : _removePhoto,
+                          child: const Text('Remove'),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
+    Widget shell(Widget child) {
+      if (adminInDialog(context)) return child;
+      return AdminGlassScene(child: child);
+    }
+
     if (!_adminGatePassed) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('New bike & QR'),
+      return shell(
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: const Text('New bike & QR'),
+            backgroundColor: Colors.transparent,
+            foregroundColor: cs.onSurface,
+            surfaceTintColor: Colors.transparent,
+            flexibleSpace: const GlassAppBarBackdrop(),
+          ),
+          body: const Center(child: CircularProgressIndicator()),
         ),
-        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
-    return PopScope(
+    return shell(
+      PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         Navigator.of(context).pop(_refreshListOnPop);
       },
       child: Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         leading: IconButton(
           tooltip: adminInDialog(context) ? 'Close' : 'Back',
@@ -233,6 +406,11 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
           onPressed: () => Navigator.of(context).pop(_refreshListOnPop),
         ),
         title: Text(_isExisting ? 'Bike QR' : 'New bike & QR'),
+        backgroundColor: Colors.transparent,
+        foregroundColor: cs.onSurface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: const GlassAppBarBackdrop(),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
@@ -454,6 +632,8 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                       },
                     ),
                     const SizedBox(height: 16),
+                    _photoField(theme, cs),
+                    const SizedBox(height: 16),
                     if (_status == 'rented')
                       InputDecorator(
                         decoration: const InputDecoration(
@@ -525,6 +705,7 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
           ),
         ],
       ),
+    ),
     ),
     );
   }

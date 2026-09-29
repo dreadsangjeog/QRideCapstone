@@ -408,9 +408,11 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                   },
                                   color: switch (r.signal) {
                                     _RiderSignal.live => cs.onErrorContainer,
-                                    _RiderSignal.delayed => const Color(
-                                      0xFFB45309,
-                                    ),
+                                    _RiderSignal.delayed =>
+                                      Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? const Color(0xFFFBBF24)
+                                          : const Color(0xFFB45309),
                                     _ => cs.onSurfaceVariant,
                                   },
                                   size: 22,
@@ -448,7 +450,10 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                                 0xFF34C759,
                                               ),
                                               _RiderSignal.delayed =>
-                                                const Color(0xFFB45309),
+                                                Theme.of(context).brightness ==
+                                                        Brightness.dark
+                                                    ? const Color(0xFFFBBF24)
+                                                    : const Color(0xFFB45309),
                                               _ => cs.error,
                                             },
                                             fontWeight: FontWeight.w700,

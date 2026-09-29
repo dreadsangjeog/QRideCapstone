@@ -92,8 +92,8 @@ class _TorchFab extends StatelessWidget {
 }
 
 class _DurationPickerSheet extends StatefulWidget {
-  const _DurationPickerSheet({required this.bikeLabel});
-  final String bikeLabel;
+  const _DurationPickerSheet({required this.bike});
+  final Bike bike;
 
   @override
   State<_DurationPickerSheet> createState() => _DurationPickerSheetState();
@@ -143,11 +143,28 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
             style: theme.textTheme.titleLarge
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
-          const SizedBox(height: 4),
-          Text(
-            widget.bikeLabel,
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: cs.onSurfaceVariant),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              BikePhotoView(
+                url: AdminRepository.publicPhotoUrl(widget.bike.photoPath),
+                size: 64,
+                radius: 14,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.bike.label?.trim().isNotEmpty == true
+                      ? '${widget.bike.label} (${widget.bike.code})'
+                      : 'Bike ${widget.bike.code}',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           Container(

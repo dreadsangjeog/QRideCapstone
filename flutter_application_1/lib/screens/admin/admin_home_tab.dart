@@ -14,7 +14,7 @@ import 'admin_report_charts.dart';
 final _peso = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
 final _pesoExact = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
 
-const _green = Color(0xFF16A34A);
+const _green = Color(0xFF22C55E);
 const _orange = Color(0xFFEA580C);
 const _pink = Color(0xFFDB2777);
 

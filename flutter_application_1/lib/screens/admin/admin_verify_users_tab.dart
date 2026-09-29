@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/kyc_repository.dart';
-import '../../theme/brand.dart';
+import '../../widgets/login_scene_backdrop.dart';
 import '../../widgets/qride_glass.dart';
 import '../../widgets/user_portal_chrome.dart';
 import 'admin_layout.dart';
@@ -19,7 +19,10 @@ class AdminVerifyUsersTab extends StatefulWidget {
   State<AdminVerifyUsersTab> createState() => _AdminVerifyUsersTabState();
 }
 
-class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
+class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab>
+    with AdminSilentReload, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   final _repo = KycRepository();
   final _searchCtrl = TextEditingController();
   Timer? _debounce;
@@ -27,14 +30,17 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
   /// null = all statuses
   String? _statusFilter = 'pending';
   bool _newestFirst = false;
-  late Future<List<KycPendingUser>> _future = _load();
+  List<KycPendingUser>? _rows;
+  Object? _error;
   Timer? _poll;
+  Timer? _coalesce;
 
   @override
   void initState() {
     super.initState();
     widget.changes?.addListener(_onOutsideChange);
-    _poll = Timer.periodic(const Duration(seconds: 12), (_) => _onOutsideChange());
+    unawaited(_refresh());
+    _poll = Timer.periodic(const Duration(seconds: 45), (_) => _onOutsideChange());
   }
 
   @override
@@ -51,12 +57,16 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
     widget.changes?.removeListener(_onOutsideChange);
     _debounce?.cancel();
     _poll?.cancel();
+    _coalesce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
 
   void _onOutsideChange() {
-    if (mounted) unawaited(_refresh());
+    _coalesce?.cancel();
+    _coalesce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) unawaited(_refresh());
+    });
   }
 
   Future<List<KycPendingUser>> _load() {
@@ -67,8 +77,21 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _future = _load());
-    await _future;
+    await silentReload(() async {
+      try {
+        final rows = await _load();
+        if (!mounted) return;
+        setState(() {
+          _rows = rows;
+          _error = null;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          if (_rows == null) _error = e;
+        });
+      }
+    });
   }
 
   void _onSearchChanged(String _) {
@@ -80,7 +103,11 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
 
   void _setFilter(String? status) {
     if (_statusFilter == status) return;
-    setState(() => _statusFilter = status);
+    setState(() {
+      _statusFilter = status;
+      _rows = null;
+      _error = null;
+    });
     unawaited(_refresh());
   }
 
@@ -95,6 +122,7 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
@@ -125,7 +153,7 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
                       decoration: InputDecoration(
                         hintText: 'Search by name or username…',
                         filled: true,
-                        fillColor: cs.surface.withValues(alpha: 0.9),
+                        fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.9),
                         prefixIcon: const Icon(Icons.search_rounded),
                         suffixIcon: _searchCtrl.text.isEmpty
                             ? null
@@ -213,135 +241,127 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab> {
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: _refresh,
-                  child: FutureBuilder<List<KycPendingUser>>(
-                    future: _future,
-                    builder: (context, snap) {
-                      if (snap.connectionState != ConnectionState.done) {
-                        return ListView(
-                          children: const [
-                            SizedBox(height: 140),
-                            Center(child: CircularProgressIndicator()),
-                          ],
-                        );
-                      }
-                      if (snap.hasError) {
-                        return ListView(
-                          padding: const EdgeInsets.all(24),
-                          children: [
-                            PolishedSectionCard(
-                              child: Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Column(
-                                  children: [
-                                    Icon(Icons.error_outline_rounded,
-                                        color: cs.error, size: 32),
-                                    const SizedBox(height: 10),
-                                    Text('${snap.error}',
-                                        textAlign: TextAlign.center),
-                                    const SizedBox(height: 14),
-                                    FilledButton(
-                                      onPressed: _refresh,
-                                      child: const Text('Retry'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-                      final rows = [...snap.data ?? <KycPendingUser>[]];
-                      if (_newestFirst) {
-                        rows.sort((a, b) {
-                          final at = a.createdAt ??
-                              DateTime.fromMillisecondsSinceEpoch(0);
-                          final bt = b.createdAt ??
-                              DateTime.fromMillisecondsSinceEpoch(0);
-                          return bt.compareTo(at);
-                        });
-                      } else {
-                        rows.sort(
-                          (a, b) => a.displayName
-                              .toLowerCase()
-                              .compareTo(b.displayName.toLowerCase()),
-                        );
-                      }
-                      if (rows.isEmpty) {
-                        return ListView(
-                          padding: const EdgeInsets.all(24),
-                          children: [
-                            const SizedBox(height: 48),
-                            PolishedSectionCard(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 36,
-                                ),
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.badge_outlined,
-                                      size: 40,
-                                      color: cs.primary.withValues(alpha: 0.7),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      _statusFilter == 'pending'
-                                          ? 'No riders waiting for review'
-                                          : 'No riders match this search',
-                                      textAlign: TextAlign.center,
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      'Try another filter or search term.',
-                                      textAlign: TextAlign.center,
-                                      style: theme.textTheme.bodyMedium
-                                          ?.copyWith(
-                                        color: cs.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-                      return ListView(
-                        padding: EdgeInsets.fromLTRB(
-                          pad.left,
-                          8,
-                          pad.right,
-                          pad.bottom,
-                        ),
-                        children: [
-                          AdminCardGrid(
-                            minItemWidth: 420,
-                            spacing: 12,
-                            children: [
-                              for (final u in rows)
-                                _UserRowCard(
-                                  user: u,
-                                  onTap: () => _openUser(u),
-                                ),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                  child: _usersBody(theme, cs, pad),
                 ),
               ),
             ],
           ),
+    );
+  }
+
+  Widget _usersBody(ThemeData theme, ColorScheme cs, EdgeInsets pad) {
+    if (_rows == null && _error != null) {
+      return ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          PolishedSectionCard(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  Icon(Icons.error_outline_rounded, color: cs.error, size: 32),
+                  const SizedBox(height: 10),
+                  Text('$_error', textAlign: TextAlign.center),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    onPressed: _refresh,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    if (_rows == null) {
+      return ListView(
+        children: const [
+          SizedBox(height: 140),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+    final rows = [..._rows!];
+    if (_newestFirst) {
+      rows.sort((a, b) {
+        final at = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bt = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bt.compareTo(at);
+      });
+    } else {
+      rows.sort(
+        (a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
+    }
+    if (rows.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 48),
+          PolishedSectionCard(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 36,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.badge_outlined,
+                      size: 40,
+                      color: cs.primary.withValues(alpha: 0.7),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _statusFilter == 'pending'
+                          ? 'No riders waiting for review'
+                          : 'No riders match this search',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Try another filter or search term.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        pad.left,
+        8,
+        pad.right,
+        pad.bottom,
+      ),
+      children: [
+        AdminCardGrid(
+          minItemWidth: 420,
+          spacing: 12,
+          children: [
+            for (final u in rows)
+              _UserRowCard(
+                key: ValueKey(u.id),
+                user: u,
+                onTap: () => _openUser(u),
+              ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -366,7 +386,7 @@ class _FilterChip extends StatelessWidget {
       onSelected: (_) => onTap(),
       showCheckmark: false,
       selectedColor: cs.primary.withValues(alpha: 0.14),
-      backgroundColor: cs.surface.withValues(alpha: 0.85),
+      backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.85),
       side: BorderSide(
         color: selected
             ? cs.primary.withValues(alpha: 0.45)
@@ -381,7 +401,7 @@ class _FilterChip extends StatelessWidget {
 }
 
 class _UserRowCard extends StatelessWidget {
-  const _UserRowCard({required this.user, required this.onTap});
+  const _UserRowCard({super.key, required this.user, required this.onTap});
 
   final KycPendingUser user;
   final VoidCallback onTap;
@@ -418,6 +438,7 @@ class _UserRowCard extends StatelessWidget {
                         user.displayName,
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
+                          color: cs.onSurface,
                         ),
                       ),
                       if (user.legalName.trim().isNotEmpty) ...[
@@ -584,15 +605,24 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
     final canReview = u.status == 'pending' || u.status == 'rejected';
     final canRevoke = u.status == 'verified';
 
-    return Scaffold(
-      backgroundColor: QrideBrand.mist,
+    final page = Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: const Text('Rider profile'),
+        title: Text(
+          'Rider profile',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: cs.onSurface,
+          ),
+        ),
         leading: adminDialogLeading(context),
         automaticallyImplyLeading: !adminInDialog(context),
-        backgroundColor: QrideBrand.mist,
+        backgroundColor: Colors.transparent,
+        foregroundColor: cs.onSurface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        flexibleSpace: const GlassAppBarBackdrop(),
       ),
       body: Center(
         child: ConstrainedBox(
@@ -628,6 +658,7 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
                               style: theme.textTheme.headlineSmall?.copyWith(
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -0.4,
+                                color: cs.onSurface,
                               ),
                             ),
                             if (u.legalName.isNotEmpty)
@@ -704,53 +735,15 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              const PortalSectionLabel('Live selfies'),
+              const PortalSectionLabel('Live selfie'),
               PolishedSectionCard(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final wide = constraints.maxWidth >= 560;
-                      final tiles = [
-                        _KycPhoto(
-                          path: u.selfieImagePath,
-                          label: 'Front',
-                          height: wide ? 160 : 140,
-                          emptyIcon: Icons.face_retouching_natural_outlined,
-                        ),
-                        _KycPhoto(
-                          path: u.selfieLeftPath,
-                          label: 'Look left',
-                          height: wide ? 160 : 140,
-                          emptyIcon: Icons.face_outlined,
-                        ),
-                        _KycPhoto(
-                          path: u.selfieRightPath,
-                          label: 'Look right',
-                          height: wide ? 160 : 140,
-                          emptyIcon: Icons.face_outlined,
-                        ),
-                      ];
-                      if (wide) {
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            for (var i = 0; i < tiles.length; i++) ...[
-                              if (i > 0) const SizedBox(width: 10),
-                              Expanded(child: tiles[i]),
-                            ],
-                          ],
-                        );
-                      }
-                      return Column(
-                        children: [
-                          for (var i = 0; i < tiles.length; i++) ...[
-                            if (i > 0) const SizedBox(height: 12),
-                            tiles[i],
-                          ],
-                        ],
-                      );
-                    },
+                  child: _KycPhoto(
+                    path: u.selfieImagePath,
+                    label: 'Front',
+                    height: 220,
+                    emptyIcon: Icons.face_retouching_natural_outlined,
                   ),
                 ),
               ),
@@ -822,6 +815,8 @@ class _AdminKycReviewScreenState extends State<_AdminKycReviewScreen> {
         ),
       ),
     );
+    if (adminInDialog(context)) return page;
+    return AdminGlassScene(child: page);
   }
 }
 
@@ -850,6 +845,7 @@ class _KycPhoto extends StatelessWidget {
           label,
           style: theme.textTheme.labelLarge?.copyWith(
             fontWeight: FontWeight.w700,
+            color: cs.onSurface,
           ),
         ),
         const SizedBox(height: 8),
@@ -1019,9 +1015,10 @@ class _KycPhoto extends StatelessWidget {
 }
 
 Color _kycStatusColor(String status, ColorScheme cs) {
+  final dark = cs.brightness == Brightness.dark;
   return switch (status) {
-    'verified' => const Color(0xFF16A34A),
-    'pending' => const Color(0xFFD97706),
+    'verified' => dark ? const Color(0xFF4ADE80) : const Color(0xFF16A34A),
+    'pending' => dark ? const Color(0xFFFBBF24) : const Color(0xFFD97706),
     'rejected' => cs.error,
     _ => cs.onSurfaceVariant,
   };
