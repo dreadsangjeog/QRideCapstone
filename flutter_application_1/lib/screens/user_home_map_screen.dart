@@ -7,7 +7,9 @@ import 'package:latlong2/latlong.dart';
 
 import '../models/rental.dart';
 import '../services/device_compass.dart';
+import '../services/location_tracking_service.dart';
 import '../services/rental_repository.dart';
+import '../services/ride_location_controller.dart';
 import '../utils/location_access.dart';
 import '../theme/brand.dart';
 import '../widgets/heading_map_pin.dart';
@@ -15,8 +17,11 @@ import '../widgets/qride_map_tiles.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'user_active_rental_screen.dart';
 
-/// Full-screen rider map. Local GPS + compass only — does not write
-/// rental location (that stays on the Active rental tracker).
+/// Full-screen rider map.
+///
+/// Outside a rental: local GPS + compass only (does not write to admin).
+/// During an active rental: shows the same [LocationTrackingService] fix that
+/// is upserted to admin, so rider pin and admin pin stay aligned.
 class UserHomeMapScreen extends StatefulWidget {
   const UserHomeMapScreen({super.key});
 
@@ -34,6 +39,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   StreamSubscription<CompassReading>? _compassSub;
   Timer? _tick;
   Timer? _rentalPoll;
+  LocationTrackingService? _rentalTracking;
 
   Position? _position;
   bool _follow = true;
@@ -45,6 +51,10 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   bool _extending = false;
   String? _locationHint;
   bool _waitingLocationSettings = false;
+
+  /// During a rental, prefer the shared tracker (same coords admin receives).
+  bool get _useRentalTracker =>
+      _hasActiveRide && (_rentalTracking?.isTracking ?? false);
 
   @override
   void initState() {
@@ -69,6 +79,30 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
     });
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final next = RideLocationScope.maybeOf(context)?.tracking;
+    if (next == _rentalTracking) return;
+    _rentalTracking?.position.removeListener(_onRentalTrackingUpdate);
+    _rentalTracking?.heading.removeListener(_onRentalTrackingUpdate);
+    _rentalTracking = next;
+    _rentalTracking?.position.addListener(_onRentalTrackingUpdate);
+    _rentalTracking?.heading.addListener(_onRentalTrackingUpdate);
+    _onRentalTrackingUpdate();
+    unawaited(_syncLocalStreamMode());
+  }
+
+  void _onRentalTrackingUpdate() {
+    if (!_useRentalTracker) return;
+    final pos = _rentalTracking?.position.value;
+    if (pos == null) return;
+    final hdg = _rentalTracking?.heading.value;
+    _position = pos;
+    _pose.setTarget(LatLng(pos.latitude, pos.longitude), hdg);
+    if (mounted) setState(() => _locationHint = null);
+  }
+
   Future<void> _checkRental() async {
     try {
       final rental = await _rentalRepo.fetchMyActiveRental();
@@ -80,6 +114,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
           rental?.approvedAt == _rental?.approvedAt &&
           rental?.status == _rental?.status;
       if (active == _hasActiveRide && pending == _hasPendingRide && sameRide) {
+        await _syncLocalStreamMode();
         return;
       }
       setState(() {
@@ -87,10 +122,24 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
         _hasPendingRide = pending;
         _rental = rental;
       });
+      if (active) _onRentalTrackingUpdate();
+      await _syncLocalStreamMode();
     } catch (_) {}
   }
 
+  /// One GPS consumer on the phone: rental tracker while riding, else local.
+  Future<void> _syncLocalStreamMode() async {
+    if (_useRentalTracker) {
+      await _posSub?.cancel();
+      _posSub = null;
+      _onRentalTrackingUpdate();
+      return;
+    }
+    await _startLocalLocation();
+  }
+
   Future<void> _startLocalLocation() async {
+    if (_useRentalTracker) return;
     try {
       if (!await hasLocationAccessForRental()) return;
       if (_posSub != null) {
@@ -104,6 +153,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
           accuracy: LocationAccuracy.high,
         ),
       );
+      if (_useRentalTracker) return;
       _applyPosition(first);
 
       _posSub = Geolocator.getPositionStream(
@@ -111,7 +161,10 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
           accuracy: LocationAccuracy.high,
           distanceFilter: 0,
         ),
-      ).listen(_applyPosition);
+      ).listen((pos) {
+        if (_useRentalTracker) return;
+        _applyPosition(pos);
+      });
     } catch (_) {
       if (mounted) setState(() => _locationHint = 'Could not read GPS');
     }
@@ -121,6 +174,8 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
     final stream = DeviceCompass.events;
     if (stream == null) return;
     _compassSub = stream.listen((event) {
+      // During rental, heading comes from the shared tracker (same as admin).
+      if (_useRentalTracker) return;
       final h = event.heading;
       if (h == null || h.isNaN) return;
       var deg = h % 360;
@@ -211,6 +266,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
       return;
     }
     if (fromResume && !_waitingLocationSettings) return;
+    if (!mounted) return;
     final result = await ensureLocationAccessForRental(context);
     if (!mounted) return;
     _waitingLocationSettings = result == LocationAccessResult.awaitingPhone;
@@ -228,6 +284,8 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _rentalTracking?.position.removeListener(_onRentalTrackingUpdate);
+    _rentalTracking?.heading.removeListener(_onRentalTrackingUpdate);
     _posSub?.cancel();
     _compassSub?.cancel();
     _tick?.cancel();

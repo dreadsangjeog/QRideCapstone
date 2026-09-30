@@ -11,8 +11,9 @@ import 'supabase_client.dart';
 /// Streams GPS + compass during an active rental and writes to Supabase
 /// (`rental_last_location` upsert + `rental_locations` history insert).
 ///
-/// Used while QRide is open for the rider UI. Background / screen-off uploads
-/// are owned by RideForegroundTask so there is only one persistent notice.
+/// Sole admin-map writer for the rental. Uses Geolocator’s Android foreground
+/// notification so the same stream keeps uploading in QRide, in another app,
+/// and with the screen locked (while-using permission + location FGS).
 ///
 /// Server uploads (admin map) are throttled to about every 3 seconds.
 ///
@@ -68,6 +69,9 @@ class LocationTrackingService {
   /// True while an active rental is being tracked in this isolate.
   bool get isTracking => _rentalId != null;
 
+  /// True when the GPS stream/poll/heartbeat are actively listening.
+  bool get isStreamActive => _rentalId != null && _sub != null;
+
   /// Ensures location service is on and permission is granted.
   Future<void> ensurePermissions() async {
     final enabled = await Geolocator.isLocationServiceEnabled();
@@ -92,39 +96,48 @@ class LocationTrackingService {
       );
     }
 
-    // Android 13+: RideForegroundTask needs notifications to stay alive.
+    // Android 13+: Geolocator FGS shows an ongoing notification.
     final notify = await Permission.notification.status;
     if (notify.isDenied) {
       await Permission.notification.request();
     }
   }
 
-  /// Screen locked or QRide sent to background — keep last fix warm.
-  /// Durable uploads continue via RideForegroundTask.
+  /// Screen locked or another app — flush last fix; stream/FGS stay running.
   Future<void> keepSharingWithScreenOff() async {
     if (_rentalId == null) return;
     final pos = _lastPosition;
     if (pos != null) unawaited(_attemptWrite(pos, force: true));
   }
 
-  /// Called when the app returns from the background. Restarts the GPS
-  /// stream and immediately shares the last known point.
+  /// App visible again. Only rebuild the stream if it died; otherwise flush.
   Future<void> resumeFromBackground() async {
     if (_rentalId == null) return;
-    await _restartStream();
+
+    if (_sub == null) {
+      _listenStream(forceAndroidManager: _useLegacyAndroidManager);
+      _pollTimer ??= Timer.periodic(_pollEvery, (_) => unawaited(_pollOnce()));
+      _watchdog ??= Timer.periodic(const Duration(seconds: 5), (_) {
+        final last = _lastGpsAt;
+        if (last == null) return;
+        if (DateTime.now().difference(last) > _streamStall) {
+          unawaited(_restartStream());
+        }
+      });
+      _heartbeat ??= Timer.periodic(_minInterval, (_) {
+        final pos = _lastPosition;
+        if (pos != null) unawaited(_attemptWrite(pos, force: true));
+      });
+    } else {
+      // Stream still alive — restart only if GPS has gone quiet.
+      final last = _lastGpsAt;
+      if (last == null || DateTime.now().difference(last) > _streamStall) {
+        await _restartStream();
+      }
+    }
+
     final pos = _lastPosition;
     if (pos != null) unawaited(_attemptWrite(pos, force: true));
-  }
-
-  /// Marks that the background FG isolate successfully wrote a fix (UI freshness).
-  void noteExternalWrite({double? heading}) {
-    if (_rentalId == null) return;
-    lastWriteAt.value = DateTime.now();
-    lastError.value = null;
-    if (heading != null && !heading.isNaN && heading >= 0 && heading <= 360) {
-      _lastGoodHeading = heading;
-      _publishHeading(heading);
-    }
   }
 
   LocationSettings _locationSettings({bool forceAndroidManager = false}) {
@@ -137,14 +150,21 @@ class LocationTrackingService {
         pauseLocationUpdatesAutomatically: false,
       );
     }
-    // No ForegroundNotificationConfig here — RideForegroundTask owns the
-    // single “Rental in progress” notice and background uploads.
+    // Geolocator FGS keeps the same stream + Supabase writes alive in QRide,
+    // another app, and with the screen locked (while-using + location FGS).
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 0,
         forceLocationManager: forceAndroidManager,
         intervalDuration: const Duration(seconds: 1),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationText:
+              'Sharing bike location. Stays on if you leave QRide or lock the phone.',
+          notificationTitle: 'Rental in progress',
+          enableWakeLock: true,
+          setOngoing: true,
+        ),
       );
     }
     return const LocationSettings(
@@ -379,7 +399,8 @@ class LocationTrackingService {
     };
 
     try {
-      // 1) Upsert last-known location (drives admin map).
+      // 1) Upsert drives the admin map — this must finish before we release
+      //    the write lock. History must not block it.
       try {
         await SupabaseClientProvider.client
             .from('rental_last_location')
@@ -397,17 +418,6 @@ class LocationTrackingService {
         }
       }
 
-      // 2) Insert history row (best effort).
-      try {
-        await SupabaseClientProvider.client
-            .from('rental_locations')
-            .insert(payload)
-            .timeout(_writeTimeout);
-      } catch (e) {
-        // ignore: avoid_print
-        print('[LocationTracking] history insert failed (non-fatal): $e');
-      }
-
       _lastSuccessAt = now;
       lastWriteAt.value = now;
       lastError.value = null;
@@ -417,6 +427,10 @@ class LocationTrackingService {
         'lng=${pos.longitude.toStringAsFixed(5)} '
         'hdg=${headingDeg?.toStringAsFixed(0) ?? '-'}',
       );
+
+      // 2) History trail — fire-and-forget so a slow insert cannot stall
+      //    the next admin upsert (especially with the screen locked).
+      unawaited(_insertHistory(Map<String, dynamic>.from(payload)));
     } on TimeoutException {
       lastError.value =
           'Network timeout while sharing location. Check rider\'s internet.';
@@ -437,6 +451,18 @@ class LocationTrackingService {
       if (pending != null && _rentalId != null) {
         unawaited(_attemptWrite(pending, force: pendingForce));
       }
+    }
+  }
+
+  Future<void> _insertHistory(Map<String, dynamic> payload) async {
+    try {
+      await SupabaseClientProvider.client
+          .from('rental_locations')
+          .insert(payload)
+          .timeout(_writeTimeout);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[LocationTracking] history insert failed (non-fatal): $e');
     }
   }
 

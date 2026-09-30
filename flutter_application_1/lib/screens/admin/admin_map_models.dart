@@ -27,10 +27,16 @@ class _MarkerRow {
   final DateTime? recordedAt;
   final double? heading;
 
-  /// Rider writes about every 3s. Allow a few missed uploads + phone clock
-  /// skew before we call the pin stale.
-  static const liveWithin = Duration(seconds: 20);
-  static const delayedWithin = Duration(seconds: 45);
+  /// Rider writes about every 3s. Wider windows + hysteresis (see
+  /// [signalWithHysteresis]) avoid yellow/red flicker when a write is late.
+  static const liveWithin = Duration(seconds: 30);
+  static const delayedWithin = Duration(seconds: 75);
+
+  /// Extra seconds before leaving a band (stops 1Hz timer flicker at edges).
+  static const leaveGrace = Duration(seconds: 10);
+
+  /// Must beat the threshold by this much to re-enter a fresher band.
+  static const recoverSlack = Duration(seconds: 8);
 
   Duration? get age {
     final at = recordedAt;
@@ -39,20 +45,42 @@ class _MarkerRow {
     return d.isNegative ? Duration.zero : d;
   }
 
-  _RiderSignal get signal {
+  _RiderSignal get signal => signalWithHysteresis(null);
+
+  /// Stable signal for map pins — keep prior band until age clearly crosses.
+  _RiderSignal signalWithHysteresis(_RiderSignal? previous) {
     final a = age;
     if (a == null) return _RiderSignal.waiting;
-    if (a <= liveWithin) return _RiderSignal.live;
-    if (a <= delayedWithin) return _RiderSignal.delayed;
-    return _RiderSignal.lost;
+
+    final prev = previous ?? _RiderSignal.waiting;
+    switch (prev) {
+      case _RiderSignal.live:
+        if (a <= liveWithin + leaveGrace) return _RiderSignal.live;
+        if (a <= delayedWithin + leaveGrace) return _RiderSignal.delayed;
+        return _RiderSignal.lost;
+      case _RiderSignal.delayed:
+        if (a <= liveWithin - recoverSlack) return _RiderSignal.live;
+        if (a <= delayedWithin + leaveGrace) return _RiderSignal.delayed;
+        return _RiderSignal.lost;
+      case _RiderSignal.lost:
+        if (a <= liveWithin - recoverSlack) return _RiderSignal.live;
+        if (a <= delayedWithin - recoverSlack) return _RiderSignal.delayed;
+        return _RiderSignal.lost;
+      case _RiderSignal.waiting:
+        if (a <= liveWithin) return _RiderSignal.live;
+        if (a <= delayedWithin) return _RiderSignal.delayed;
+        return _RiderSignal.lost;
+    }
   }
 
   bool get isStale =>
       signal == _RiderSignal.lost || signal == _RiderSignal.waiting;
   bool get isLive => signal == _RiderSignal.live;
 
-  String get freshnessLabel {
-    switch (signal) {
+  String get freshnessLabel => freshnessLabelFor(signal);
+
+  String freshnessLabelFor(_RiderSignal s) {
+    switch (s) {
       case _RiderSignal.waiting:
         return 'Waiting for first GPS share';
       case _RiderSignal.live:
@@ -83,11 +111,14 @@ class _MarkerRow {
 
   static _MarkerRow? fromJoined(Map<String, dynamic> json) {
     try {
+      final rentalId = json['rental_id'].toString();
       final rentals = json['rentals'] as Map<String, dynamic>?;
       final bikes = rentals?['bikes'] as Map<String, dynamic>?;
       final profiles = rentals?['profiles'] as Map<String, dynamic>?;
       final code = (bikes?['code'] ?? '').toString().trim();
-      if (code.isEmpty) return null;
+      // Still show the pin if the bike join is missing (deleted bike, etc.).
+      final displayCode =
+          code.isEmpty ? 'R${rentalId.length >= 6 ? rentalId.substring(0, 6) : rentalId}' : code;
 
       final label = (bikes?['label'] ?? '').toString().trim();
       final accRaw = json['accuracy_m'];
@@ -102,9 +133,9 @@ class _MarkerRow {
           .join(' ');
 
       return _MarkerRow(
-        rentalId: json['rental_id'].toString(),
-        bikeCode: code,
-        bikeLabel: label.isEmpty ? 'Bike $code' : label,
+        rentalId: rentalId,
+        bikeCode: displayCode,
+        bikeLabel: label.isEmpty ? 'Bike $displayCode' : label,
         username: legal.isNotEmpty
             ? legal
             : (uname.isEmpty ? 'Unknown rider' : uname),

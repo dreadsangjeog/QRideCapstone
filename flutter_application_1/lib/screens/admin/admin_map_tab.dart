@@ -37,6 +37,8 @@ class _AdminMapTabState extends State<AdminMapTab> {
 
   List<_MarkerRow> _riders = [];
   final Map<String, SmoothLatLng> _poses = {};
+  /// Last stable pin signal per rental — used for yellow/red hysteresis.
+  final Map<String, _RiderSignal> _signalByRental = {};
   bool _loadingRiders = false;
   DateTime? _lastRefresh;
   Timer? _refreshTimer;
@@ -68,9 +70,22 @@ class _AdminMapTabState extends State<AdminMapTab> {
     });
     _staleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
+      _refreshStableSignals();
       setState(() {});
       _notifyNewlyOffline();
     });
+  }
+
+  _RiderSignal _signalFor(_MarkerRow r) {
+    return r.signalWithHysteresis(_signalByRental[r.rentalId]);
+  }
+
+  void _refreshStableSignals() {
+    for (final r in _riders) {
+      _signalByRental[r.rentalId] = r.signalWithHysteresis(
+        _signalByRental[r.rentalId],
+      );
+    }
   }
 
   void _subscribeRiderLocations() {
@@ -158,11 +173,13 @@ class _AdminMapTabState extends State<AdminMapTab> {
       }
       _poses.removeWhere((id, _) => !ids.contains(id));
       _offlineNotified.removeWhere((id) => !ids.contains(id));
+      _signalByRental.removeWhere((id, _) => !ids.contains(id));
       setState(() {
         _riders = parsed;
         _loadingRiders = false;
         _lastRefresh = DateTime.now();
       });
+      _refreshStableSignals();
       _notifyNewlyOffline();
     } catch (_) {
       if (!mounted) return;
@@ -172,7 +189,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
 
   void _notifyNewlyOffline() {
     for (final r in _riders) {
-      if (r.signal != _RiderSignal.lost) {
+      if (_signalFor(r) != _RiderSignal.lost) {
         _offlineNotified.remove(r.rentalId);
         continue;
       }
@@ -213,10 +230,10 @@ class _AdminMapTabState extends State<AdminMapTab> {
         ? LatLng(_adminPos!.latitude, _adminPos!.longitude)
         : const LatLng(14.5995, 120.9842);
 
-    final liveCount = _riders.where((r) => r.isLive).length;
-    final delayedCount = _riders
-        .where((r) => r.signal == _RiderSignal.delayed)
-        .length;
+    final liveCount =
+        _riders.where((r) => _signalFor(r) == _RiderSignal.live).length;
+    final delayedCount =
+        _riders.where((r) => _signalFor(r) == _RiderSignal.delayed).length;
     final staleCount = _riders.length - liveCount - delayedCount;
 
     final riderMarkers = _poses.entries.map((e) {
@@ -227,7 +244,8 @@ class _AdminMapTabState extends State<AdminMapTab> {
           break;
         }
       }
-      final signal = row?.signal ?? _RiderSignal.waiting;
+      final signal =
+          row == null ? _RiderSignal.waiting : _signalFor(row);
       final pinColor = switch (signal) {
         _RiderSignal.live => cs.error,
         _RiderSignal.delayed => const Color(0xFFF59E0B),
@@ -415,6 +433,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
                     onLocate: (rider) =>
                         _mapController.move(LatLng(rider.lat, rider.lng), 17),
                     onDetails: _showRiderDetails,
+                    signalFor: _signalFor,
                   ),
                 )
               : const SizedBox(width: 0, height: double.infinity),
@@ -443,6 +462,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
             loading: _loadingRiders,
             scrollController: scrollController,
             onRefresh: () => _loadRiders(),
+            signalFor: _signalFor,
             onLocate: (rider) {
               Navigator.of(sheetCtx).pop();
               _mapController.move(LatLng(rider.lat, rider.lng), 17);
@@ -531,9 +551,11 @@ class _AdminMapTabState extends State<AdminMapTab> {
                 value: '±${row.accuracyM!.toStringAsFixed(0)} m',
               ),
             _DetailRow(
-              icon: row.isLive ? Icons.sensors_rounded : Icons.schedule_rounded,
+              icon: _signalFor(row) == _RiderSignal.live
+                  ? Icons.sensors_rounded
+                  : Icons.schedule_rounded,
               label: 'Location share',
-              value: row.freshnessLabel,
+              value: row.freshnessLabelFor(_signalFor(row)),
             ),
             if (row.recordedAt != null)
               _DetailRow(

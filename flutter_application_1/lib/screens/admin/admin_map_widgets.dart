@@ -236,6 +236,7 @@ class _RidersListSheet extends StatefulWidget {
     required this.onRefresh,
     required this.onLocate,
     required this.onDetails,
+    required this.signalFor,
     this.onClose,
   });
 
@@ -246,6 +247,7 @@ class _RidersListSheet extends StatefulWidget {
   final VoidCallback? onClose;
   final ValueChanged<_MarkerRow> onLocate;
   final ValueChanged<_MarkerRow> onDetails;
+  final _RiderSignal Function(_MarkerRow) signalFor;
 
   @override
   State<_RidersListSheet> createState() => _RidersListSheetState();
@@ -375,6 +377,7 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                   separatorBuilder: (context, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final r = filtered[index];
+                    final signal = widget.signalFor(r);
                     return Material(
                       color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(14),
@@ -389,7 +392,7 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                 width: 44,
                                 height: 44,
                                 decoration: BoxDecoration(
-                                  color: switch (r.signal) {
+                                  color: switch (signal) {
                                     _RiderSignal.live => cs.errorContainer,
                                     _RiderSignal.delayed => const Color(
                                       0x14F59E0B,
@@ -399,14 +402,14 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
-                                  switch (r.signal) {
+                                  switch (signal) {
                                     _RiderSignal.live =>
                                       Icons.directions_bike_rounded,
                                     _RiderSignal.delayed =>
                                       Icons.schedule_rounded,
                                     _ => Icons.location_off_outlined,
                                   },
-                                  color: switch (r.signal) {
+                                  color: switch (signal) {
                                     _RiderSignal.live => cs.onErrorContainer,
                                     _RiderSignal.delayed =>
                                       Theme.of(context).brightness ==
@@ -442,10 +445,10 @@ class _RidersListSheetState extends State<_RidersListSheet> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      r.freshnessLabel,
+                                      r.freshnessLabelFor(signal),
                                       style: theme.textTheme.labelSmall
                                           ?.copyWith(
-                                            color: switch (r.signal) {
+                                            color: switch (signal) {
                                               _RiderSignal.live => const Color(
                                                 0xFF34C759,
                                               ),

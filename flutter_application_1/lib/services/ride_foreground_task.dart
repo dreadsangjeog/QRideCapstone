@@ -15,12 +15,11 @@ void rideForegroundStartCallback() {
   FlutterForegroundTask.setTaskHandler(RideLocationTaskHandler());
 }
 
-/// Owns the persistent “Rental in progress” notice and uploads GPS to Supabase
-/// about every 3s for an active rental — including screen lock and leaving QRide.
+/// Plugin helper kept initialized from [main] for compatibility.
 ///
-/// Stops when the rental ends (RLS rejects writes), the rider signs out, the
-/// phone is powered off / force-stopped, or QRide is uninstalled.
-/// Does not require “Allow all the time.”
+/// Active-rental GPS no longer starts this service. Admin uploads use
+/// Geolocator’s own location foreground service in [LocationTrackingService]
+/// so only one location FGS runs (two at once contended for GPS).
 class RideForegroundTask {
   RideForegroundTask._();
 
@@ -92,13 +91,13 @@ class RideForegroundTask {
     );
 
     if (await FlutterForegroundTask.isRunningService) {
+      // Do not restart — that drops in-flight GPS writes. Just refresh context.
       pushContext(
         rentalId: rentalId,
         userId: userId,
         accessToken: accessToken,
         refreshToken: refreshToken,
       );
-      await FlutterForegroundTask.restartService();
       return;
     }
 
@@ -255,6 +254,8 @@ class RideLocationTaskHandler extends TaskHandler {
     final userId = _userId;
     var token = _accessToken;
     if (rentalId == null || userId == null || token == null || token.isEmpty) {
+      // Cold start race: tokens not pushed yet — reload once more next tick.
+      await _loadPersisted();
       return;
     }
 
@@ -267,12 +268,10 @@ class RideLocationTaskHandler extends TaskHandler {
         return;
       }
 
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 8),
-        ),
-      );
+      // Fresh fix when possible; on screen-lock / cold GPS fall back to last
+      // known so admin still advances instead of stalling for an 8s timeout.
+      final pos = await _readPosition();
+      if (pos == null) return;
 
       var result = await _upsertLocation(
         rentalId: rentalId,
@@ -329,6 +328,33 @@ class RideLocationTaskHandler extends TaskHandler {
       print('[RideFgTask] share failed: $e');
     } finally {
       _busy = false;
+    }
+  }
+
+  /// Prefer last-known (fed by the main Geolocator stream/FGS) so this backup
+  /// isolate does not contend with getCurrentPosition while screen-locked.
+  Future<Position?> _readPosition() async {
+    Position? last;
+    try {
+      last = await Geolocator.getLastKnownPosition();
+    } catch (_) {}
+
+    if (last != null) {
+      final age = DateTime.now().difference(last.timestamp);
+      if (!age.isNegative && age <= const Duration(seconds: 25)) {
+        return last;
+      }
+    }
+
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 4),
+        ),
+      );
+    } catch (_) {
+      return last;
     }
   }
 
