@@ -7,6 +7,7 @@ import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
 import '../services/kyc_repository.dart';
 import '../utils/auth_validators.dart';
+import '../widgets/birthdate_picker.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_generate_qr_screen.dart';
@@ -595,7 +596,7 @@ class _LegalNameCard extends StatelessWidget {
                             final now = DateTime.now();
                             final initial = DateTime.tryParse(birthdate.text) ??
                                 DateTime(now.year - 18, now.month, now.day);
-                            final picked = await showDatePicker(
+                            final picked = await showBirthdatePicker(
                               context: context,
                               initialDate: initial,
                               firstDate: DateTime(1920),

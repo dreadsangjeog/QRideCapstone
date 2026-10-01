@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 import '../../models/rental.dart';
 import '../../models/rental_with_bike.dart';
 import '../../services/admin_repository.dart';
+import '../../services/rental_repository.dart';
+import '../../utils/peso.dart';
 import '../../utils/rental_billing.dart';
 import '../../widgets/qride_glass.dart';
 import 'admin_layout.dart';
@@ -37,6 +39,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab>
 
   String? _statusFilter;
   List<RentalWithBike>? _rows;
+  List<HourlyRateChange> _rateHistory = const [];
   Object? _error;
   Timer? _poll;
   Timer? _clock;
@@ -88,10 +91,14 @@ class _AdminHistoryTabState extends State<AdminHistoryTab>
   Future<void> _refresh() async {
     await silentReload(() async {
       try {
-        final rows = await _load();
+        final rowsFuture = _load();
+        final historyFuture = RentalRepository().fetchRateHistory();
+        final rows = await rowsFuture;
+        final history = await historyFuture;
         if (!mounted) return;
         setState(() {
           _rows = rows;
+          _rateHistory = history;
           _error = null;
         });
       } catch (e) {
@@ -106,7 +113,10 @@ class _AdminHistoryTabState extends State<AdminHistoryTab>
   Future<void> _editEndedBilling(RentalWithBike row) async {
     final result = await showDialog<_BillingOutcome>(
       context: context,
-      builder: (ctx) => _AdjustEndedBillingDialog(row: row),
+      builder: (ctx) => _AdjustEndedBillingDialog(
+        row: row,
+        history: _rateHistory,
+      ),
     );
     if (result == null || !mounted) return;
     try {
@@ -253,6 +263,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab>
         key: ValueKey(rows[i].rental.id),
         row: rows[i],
         dateFmt: df,
+        rateHistory: _rateHistory,
         onEndedTap: () => _editEndedBilling(rows[i]),
         onActiveHint: () {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -273,12 +284,14 @@ class _HistoryRentalCard extends StatefulWidget {
     super.key,
     required this.row,
     required this.dateFmt,
+    required this.rateHistory,
     required this.onEndedTap,
     required this.onActiveHint,
   });
 
   final RentalWithBike row;
   final DateFormat dateFmt;
+  final List<HourlyRateChange> rateHistory;
   final VoidCallback onEndedTap;
   final VoidCallback onActiveHint;
 
@@ -365,11 +378,10 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
       elapsedMin = rideElapsedMinutes(r, endOrNow);
       final ot = overtimeMinutesAt(r, endOrNow);
       otMin = ot;
-      final b = baseRentalCost(r);
-      base = b;
-      final pen = penaltyForOvertimeMinutes(r, ot);
-      penSuggested = pen;
-      totalSuggested = b + pen;
+      final charge = rentalChargeAt(r, endOrNow, widget.rateHistory);
+      base = charge.base;
+      penSuggested = charge.penalty;
+      totalSuggested = charge.total;
     }
 
     final storedPen = r.penaltyFee;
@@ -395,7 +407,9 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    Icons.person_outline_rounded,
+                    row.accountDeleted
+                        ? Icons.person_off_outlined
+                        : Icons.person_outline_rounded,
                     size: 22,
                     color: cs.onPrimaryContainer,
                   ),
@@ -587,7 +601,7 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                           _Line(
                             icon: Icons.payments_outlined,
                             label: 'Base (planned slot)',
-                            value: '₱${base.toStringAsFixed(2)}',
+                            value: formatPeso(base),
                           ),
                           if (showDbBilling &&
                               (storedPen != null ||
@@ -596,15 +610,14 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                             _Line(
                               icon: Icons.receipt_long_outlined,
                               label: 'Penalty (saved)',
-                              value:
-                                  '₱${(storedPen ?? 0).toStringAsFixed(2)}',
+                              value: formatPeso(storedPen ?? 0),
                             ),
                             const SizedBox(height: 6),
                             _Line(
                               icon: Icons.account_balance_wallet_outlined,
                               label: 'Total (saved)',
                               value: storedTotal != null
-                                  ? '₱${storedTotal.toStringAsFixed(2)}'
+                                  ? formatPeso(storedTotal)
                                   : '—',
                               valueColor: storedTotal == null
                                   ? cs.onSurfaceVariant
@@ -616,7 +629,7 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                               icon: Icons.calculate_outlined,
                               label: 'From clock (suggested)',
                               value:
-                                  'Penalty ₱${penSuggested.toStringAsFixed(2)} · Total ₱${totalSuggested.toStringAsFixed(2)}',
+                                  'Penalty ${formatPeso(penSuggested)} · Total ${formatPeso(totalSuggested)}',
                               valueColor: cs.onSurfaceVariant,
                             ),
                           ],
@@ -701,9 +714,13 @@ class _Line extends StatelessWidget {
 }
 
 class _AdjustEndedBillingDialog extends StatefulWidget {
-  const _AdjustEndedBillingDialog({required this.row});
+  const _AdjustEndedBillingDialog({
+    required this.row,
+    required this.history,
+  });
 
   final RentalWithBike row;
+  final List<HourlyRateChange> history;
 
   @override
   State<_AdjustEndedBillingDialog> createState() =>
@@ -721,15 +738,12 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
   void initState() {
     super.initState();
     final end = r.endedAt!;
-    final base = baseRentalCost(r);
-    final ot = overtimeMinutesAt(r, end);
-    final pen = penaltyForOvertimeMinutes(r, ot);
-    final sugTotal = base + pen;
+    final charge = rentalChargeAt(r, end, widget.history);
     _penalty = TextEditingController(
-      text: (r.penaltyFee ?? pen).toStringAsFixed(2),
+      text: roundPeso(r.penaltyFee ?? charge.penalty).toStringAsFixed(0),
     );
     _total = TextEditingController(
-      text: (r.actualCost ?? sugTotal).toStringAsFixed(2),
+      text: roundPeso(r.actualCost ?? charge.total).toStringAsFixed(0),
     );
   }
 
@@ -740,20 +754,20 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
     super.dispose();
   }
 
+  RentalCharge get _clockCharge =>
+      rentalChargeAt(r, r.endedAt!, widget.history);
+
   void _applySuggestedFromClock() {
-    final end = r.endedAt!;
-    final base = baseRentalCost(r);
-    final ot = overtimeMinutesAt(r, end);
-    final pen = penaltyForOvertimeMinutes(r, ot);
+    final charge = _clockCharge;
     setState(() {
       _error = null;
-      _penalty.text = pen.toStringAsFixed(2);
-      _total.text = (base + pen).toStringAsFixed(2);
+      _penalty.text = charge.penalty.toStringAsFixed(0);
+      _total.text = charge.total.toStringAsFixed(0);
     });
   }
 
   void _trySave() {
-    final base = baseRentalCost(r);
+    final base = _clockCharge.base;
     final p = double.tryParse(_penalty.text.trim().replaceAll(',', ''));
     final t = double.tryParse(_total.text.trim().replaceAll(',', ''));
     if (p == null || t == null) {
@@ -767,11 +781,11 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
     if (t + 0.009 < base) {
       setState(
         () => _error =
-            'Total is below base slot charge (₱${base.toStringAsFixed(2)}).',
+            'Total is below base slot charge (${formatPeso(base)}).',
       );
       return;
     }
-    Navigator.pop(context, (penalty: p, total: t));
+    Navigator.pop(context, (penalty: roundPeso(p), total: roundPeso(t)));
   }
 
   @override
@@ -779,9 +793,10 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final end = r.endedAt!;
-    final base = baseRentalCost(r);
+    final charge = _clockCharge;
+    final base = charge.base;
     final ot = overtimeMinutesAt(r, end);
-    final sugPen = penaltyForOvertimeMinutes(r, ot);
+    final sugPen = charge.penalty;
 
     return AlertDialog(
       title: const Text('Adjust billing'),
@@ -811,9 +826,9 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
             ),
             const SizedBox(height: 12),
             Text('Overtime from times: ${ot.ceil()} min'),
-            Text('Base slot charge: ₱${base.toStringAsFixed(2)}'),
+            Text('Base slot charge: ${formatPeso(base)}'),
             Text(
-              'Formula penalty (1.5× hourly rate): ₱${sugPen.toStringAsFixed(2)}',
+              'Formula penalty (1.5× hourly rate): ${formatPeso(sugPen)}',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: cs.onSurfaceVariant,
               ),

@@ -6,7 +6,9 @@
         android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- No ACCESS_BACKGROUND_LOCATION: while-using + rental FGS is enough.
+    <!-- No ACCESS_BACKGROUND_LOCATION: while-using + the rental location
+         foreground service is enough. That service keeps a GPS listener open
+         for the whole ride, including in a pocket with the screen locked.
          Declaring background location makes Android offer “Allow all the time”. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
@@ -18,7 +20,7 @@
 
     <application
         android:label="QRide"
-        android:name="${applicationName}"
+        android:name="com.qride.demo.QRideApplication"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

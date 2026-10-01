@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../screens/legal/terms_screen.dart';
 import '../utils/auth_validators.dart';
 import '../utils/error_message.dart';
+import '../widgets/birthdate_picker.dart';
 import '../widgets/login_scene_backdrop.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -77,7 +78,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final now = DateTime.now();
     final initial = DateTime.tryParse(_birthdate.text) ??
         DateTime(now.year - 18, now.month, now.day);
-    final picked = await showDatePicker(
+    final picked = await showBirthdatePicker(
       context: context,
       initialDate: initial,
       firstDate: DateTime(1920),

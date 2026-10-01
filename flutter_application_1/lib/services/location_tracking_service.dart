@@ -11,10 +11,14 @@ import 'supabase_client.dart';
 /// Streams GPS + compass during an active rental and writes to Supabase
 /// (`rental_last_location` upsert + `rental_locations` history insert).
 ///
-/// On Android the rental foreground task is the only GPS client and the only
-/// admin-map writer. This service then only mirrors those fixes into the rider
-/// UI and forwards compass heading. Opening a second Geolocator stream made
-/// the admin pin flicker red/yellow and stop when the screen locked.
+/// On Android the rental foreground task is the only ongoing GPS client and
+/// the only ongoing admin-map writer. It keeps a GPS listener open for the
+/// whole ride, including when QRide is backgrounded or the phone is locked
+/// in a pocket. This service mirrors those fixes into the rider UI and
+/// forwards compass heading. When a rental is first approved it also writes
+/// the phone's last known point once, so the admin pin does not wait on a
+/// satellite cold start. Opening a second Geolocator stream made the admin
+/// pin flicker red/yellow and stop when the screen locked.
 ///
 /// On iOS this service is the writer. Server uploads are throttled to about
 /// every 3 seconds.
@@ -247,6 +251,65 @@ class LocationTrackingService {
             unawaited(_restartStream());
           },
         );
+  }
+
+  /// Writes the phone's last known point once so the admin pin appears as
+  /// soon as a rental is approved.
+  ///
+  /// The rental GPS listener often needs half a minute for its first
+  /// satellite fix. This does not open a location stream.
+  Future<void> seedAdminFromLastKnown(String rentalId) async {
+    final userId = SupabaseClientProvider.client.auth.currentUser?.id;
+    if (userId == null) return;
+    Position? pos;
+    try {
+      pos = await Geolocator.getLastKnownPosition();
+    } catch (e) {
+      // ignore: avoid_print
+      print('[LocationTracking] seed read failed: $e');
+      return;
+    }
+    if (pos == null) return;
+    final age = DateTime.now().difference(pos.timestamp);
+    if (!age.isNegative && age > const Duration(minutes: 10)) return;
+
+    final payload = <String, dynamic>{
+      'rental_id': rentalId,
+      'user_id': userId,
+      'lat': pos.latitude,
+      'lng': pos.longitude,
+      'accuracy_m': pos.accuracy,
+      'recorded_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    final heading = _usableHeading(pos);
+    if (heading != null) payload['heading'] = heading;
+    try {
+      await SupabaseClientProvider.client
+          .from('rental_last_location')
+          .upsert(payload, onConflict: 'rental_id')
+          .timeout(_writeTimeout);
+      // ignore: avoid_print
+      print(
+        '[LocationTracking] seed OK lat=${pos.latitude.toStringAsFixed(5)} '
+        'lng=${pos.longitude.toStringAsFixed(5)}',
+      );
+    } catch (e) {
+      if (!payload.containsKey('heading')) {
+        // ignore: avoid_print
+        print('[LocationTracking] seed failed: $e');
+        return;
+      }
+      payload.remove('heading');
+      try {
+        await SupabaseClientProvider.client
+            .from('rental_last_location')
+            .upsert(payload, onConflict: 'rental_id')
+            .timeout(_writeTimeout);
+      } catch (e2) {
+        // ignore: avoid_print
+        print('[LocationTracking] seed failed: $e2');
+      }
+    }
   }
 
   /// Rider UI mirror of the Android foreground-task writer.

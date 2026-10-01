@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../utils/peso.dart';
 import 'notification_repository.dart';
 
 /// Wraps flutter_local_notifications for rental-related alerts.
@@ -213,9 +214,9 @@ class NotificationService {
         id: 13,
         title: 'Rental ended',
         body: penaltyFee > 0
-            ? 'Total: ₱${totalCost.toStringAsFixed(2)} '
-                '(includes ₱${penaltyFee.toStringAsFixed(2)} penalty)'
-            : 'Total: ₱${totalCost.toStringAsFixed(2)}. Thank you!',
+            ? 'Total: ${formatPeso(totalCost)} '
+                '(includes ${formatPeso(penaltyFee)} penalty)'
+            : 'Total: ${formatPeso(totalCost)}. Thank you!',
         importance: Importance.max,
       );
 

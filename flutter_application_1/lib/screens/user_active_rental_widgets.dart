@@ -445,7 +445,7 @@ class _CostRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: style),
-          Text('₱${value.toStringAsFixed(2)}', style: style),
+          Text(formatPeso(value), style: style),
         ],
       ),
     );
@@ -456,10 +456,14 @@ class ExtendTimeSheet extends StatefulWidget {
   const ExtendTimeSheet({
     required this.currentPlannedMinutes,
     required this.ratePerHour,
+    this.approvedAt,
+    this.history = const [],
   });
 
   final int currentPlannedMinutes;
   final double ratePerHour;
+  final DateTime? approvedAt;
+  final List<HourlyRateChange> history;
 
   @override
   State<ExtendTimeSheet> createState() => _ExtendTimeSheetState();
@@ -475,10 +479,35 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
 
   int _extraMinutes = 15;
 
-  double get _extraCost => (_extraMinutes / 60.0) * widget.ratePerHour;
-
   int get _newTotalMinutes => widget.currentPlannedMinutes + _extraMinutes;
 
+  double get _extraCost {
+    final history = widget.history;
+    final start = widget.approvedAt;
+    if (history.isEmpty || start == null) {
+      return roundPeso((_newTotalMinutes / 60.0) * widget.ratePerHour) -
+          roundPeso(
+            (widget.currentPlannedMinutes / 60.0) * widget.ratePerHour,
+          );
+    }
+    final now = DateTime.now();
+    final current = slotCharge(
+      planStart: start,
+      plannedMinutes: widget.currentPlannedMinutes,
+      quotedRate: widget.ratePerHour,
+      history: history,
+      now: now,
+    );
+    final next = slotCharge(
+      planStart: start,
+      plannedMinutes: _newTotalMinutes,
+      quotedRate: widget.ratePerHour,
+      history: history,
+      now: now,
+    );
+    final extra = next - current;
+    return extra <= 0 ? 0 : extra;
+  }
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -509,7 +538,7 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Minimum extension is 15 minutes. Extra time is billed at the same hourly rate.',
+            'Minimum extension is 15 minutes. Added time uses the hourly fee in effect for that time.',
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: cs.onSurfaceVariant),
           ),
@@ -550,7 +579,7 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
                           ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     Text(
-                      '₱${_extraCost.toStringAsFixed(2)}',
+                      formatPeso(_extraCost),
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w800,
                         color: cs.primary,

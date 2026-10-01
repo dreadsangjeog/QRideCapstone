@@ -1,10 +1,51 @@
 import '../models/rental.dart';
 import '../models/rental_history_row.dart';
+import '../utils/rental_billing.dart';
 import 'supabase_client.dart';
 
 class RentalRepository {
-  /// Fixed rate per hour in Philippine Peso.
+  /// Fallback when the hourly fee has not been saved yet.
   static const double kRatePerHour = 50.0;
+
+  /// Current fee for new requests. Existing rentals keep their own rate.
+  Future<double> fetchHourlyRate() async {
+    try {
+      final row = await SupabaseClientProvider.client
+          .from('rental_settings')
+          .select('rate_per_hour')
+          .eq('id', 1)
+          .maybeSingle();
+      final rate = (row?['rate_per_hour'] as num?)?.toDouble();
+      if (rate != null && rate > 0) return rate;
+    } catch (_) {}
+    return kRatePerHour;
+  }
+
+  /// Fee changes, oldest first. Empty when the history table is not set up yet.
+  Future<List<HourlyRateChange>> fetchRateHistory() async {
+    try {
+      final rows = await SupabaseClientProvider.client
+          .from('rental_rate_history')
+          .select('rate_per_hour, effective_at')
+          .order('effective_at');
+      final history = <HourlyRateChange>[];
+      for (final row in rows as List<dynamic>) {
+        if (row is! Map) continue;
+        final rate = (row['rate_per_hour'] as num?)?.toDouble();
+        final at = row['effective_at'];
+        if (rate == null || rate <= 0 || at == null) continue;
+        history.add(
+          HourlyRateChange(
+            ratePerHour: rate,
+            effectiveAt: DateTime.parse(at.toString()),
+          ),
+        );
+      }
+      return history;
+    } catch (_) {
+      return const [];
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // User actions
@@ -20,12 +61,13 @@ class RentalRepository {
     final user = SupabaseClientProvider.client.auth.currentUser;
     if (user == null) throw StateError('User not signed in');
 
+    final rate = await fetchHourlyRate();
     final result = await SupabaseClientProvider.client.rpc(
       'request_rental_for_bike',
       params: {
         'p_bike_id': bikeId,
         'p_planned_mins': plannedMinutes,
-        'p_rate_per_hour': kRatePerHour,
+        'p_rate_per_hour': rate,
       },
     );
     if (result == null) throw StateError('request_rental_for_bike returned no id');

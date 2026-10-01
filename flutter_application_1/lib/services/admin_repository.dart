@@ -108,6 +108,44 @@ class AdminRepository {
     return Bike.fromJson(Map<String, dynamic>.from(row));
   }
 
+  /// Saves the hourly fee. Completed rides keep the totals already recorded.
+  ///
+  /// From this save onward, new requests and the rest of an open ride use
+  /// the new fee. That cutoff is stored by migration 037_rate_history.sql.
+  Future<double> setHourlyRate(double rate) async {
+    if (rate.isNaN || rate <= 0 || rate > 10000) {
+      throw StateError('Enter an hourly fee greater than 0 and at most 10000.');
+    }
+    final rounded = (rate * 100).roundToDouble() / 100;
+    try {
+      final rows = await SupabaseClientProvider.client
+          .from('rental_settings')
+          .update({
+            'rate_per_hour': rounded,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', 1)
+          .select('rate_per_hour');
+      if ((rows as List).isEmpty) {
+        throw StateError(
+          'Hourly fee is not set up yet. Run migration 035_hourly_rate.sql in Supabase.',
+        );
+      }
+      return ((rows.first as Map)['rate_per_hour'] as num).toDouble();
+    } catch (e) {
+      final s = e.toString();
+      if (s.contains('rental_settings') ||
+          s.contains('PGRST205') ||
+          s.contains('42P01') ||
+          s.contains('does not exist')) {
+        throw StateError(
+          'Hourly fee is not set up yet. Run migration 035_hourly_rate.sql in Supabase.',
+        );
+      }
+      rethrow;
+    }
+  }
+
   static const photoBucket = 'bike-photos';
 
   /// Public URL for a stored bike photo, or null when none.

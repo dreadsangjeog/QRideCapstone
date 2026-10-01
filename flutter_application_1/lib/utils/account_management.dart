@@ -58,7 +58,7 @@ Future<void> confirmAndDeleteAccount(BuildContext context) async {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'This permanently removes your login, verification photos, notifications, and rental history. You cannot undo this.',
+                  'This permanently removes your login, verification photos, notifications, and ride locations. Settled rides stay in staff reports without your name. You cannot undo this.',
                 ),
                 const SizedBox(height: 16),
                 TextField(

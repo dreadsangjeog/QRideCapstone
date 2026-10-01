@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../models/rental_history_row.dart';
 import '../services/rental_repository.dart';
+import '../utils/peso.dart';
 import '../widgets/user_portal_chrome.dart';
 
 part 'user_history_widgets.dart';

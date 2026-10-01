@@ -11,6 +11,10 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
+        val localMaven = file(System.getenv("USERPROFILE") + "/dev/local-maven")
+        if (localMaven.isDirectory) {
+            maven { url = uri(localMaven) }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()

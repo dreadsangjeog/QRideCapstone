@@ -9,6 +9,7 @@ class _BikesTab extends StatefulWidget {
 }
 
 class _BikesTabState extends State<_BikesTab> {
+  final _rateKey = GlobalKey<HourlyRateCardState>();
   late Future<List<Bike>> _future = widget.repo.fetchBikes();
   String? _statusFilter;
   bool _newestFirst = false;
@@ -17,7 +18,10 @@ class _BikesTabState extends State<_BikesTab> {
     setState(() {
       _future = widget.repo.fetchBikes();
     });
-    await _future;
+    await Future.wait([
+      _future,
+      _rateKey.currentState?.reload() ?? Future<void>.value(),
+    ]);
   }
 
   Future<void> _openQrGenerator({Bike? bike}) async {
@@ -135,15 +139,30 @@ class _BikesTabState extends State<_BikesTab> {
               );
             }
             if (bikes.isEmpty) {
-              return _EmptyState(
-                icon: Icons.directions_bike_outlined,
-                title: 'No bikes yet',
-                subtitle: 'Create a bike and print its QR code to get started.',
-                action: FilledButton.icon(
-                  onPressed: () => _openQrGenerator(),
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('New bike & QR'),
-                ),
+              return ListView(
+                padding: adminPagePadding(context),
+                children: [
+                  AdminContent(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        HourlyRateCard(key: _rateKey),
+                        const SizedBox(height: 24),
+                        _EmptyState(
+                          icon: Icons.directions_bike_outlined,
+                          title: 'No bikes yet',
+                          subtitle:
+                              'Create a bike and print its QR code to get started.',
+                          action: FilledButton.icon(
+                            onPressed: () => _openQrGenerator(),
+                            icon: const Icon(Icons.add_rounded),
+                            label: const Text('New bike & QR'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               );
             }
 
@@ -166,6 +185,8 @@ class _BikesTabState extends State<_BikesTab> {
                               )
                             : null,
                       ),
+                      const SizedBox(height: 16),
+                      HourlyRateCard(key: _rateKey),
                       const SizedBox(height: 16),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -267,6 +288,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
   @override
   bool get wantKeepAlive => true;
   List<RentalWithBike>? _rows;
+  List<HourlyRateChange> _rateHistory = const [];
   Object? _error;
   Timer? _poll;
   Timer? _clock;
@@ -312,10 +334,14 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
   Future<void> _refresh() async {
     await silentReload(() async {
       try {
-        final rows = await widget.repo.fetchActiveRentalsWithBikes();
+        final rowsFuture = widget.repo.fetchActiveRentalsWithBikes();
+        final historyFuture = RentalRepository().fetchRateHistory();
+        final rows = await rowsFuture;
+        final history = await historyFuture;
         if (!mounted) return;
         setState(() {
           _rows = rows;
+          _rateHistory = history;
           _error = null;
         });
       } catch (e) {
@@ -330,12 +356,13 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
   Future<void> _endRental(RentalWithBike row) async {
     final r = row.rental;
     final now = DateTime.now();
-    final approvedAt = r.approvedAt ?? r.startedAt;
-    final elapsedMin = now.difference(approvedAt).inSeconds / 60.0;
-    final overtimeMin = (elapsedMin - r.plannedMinutes).clamp(0.0, double.infinity);
-    final baseCost = (r.plannedMinutes / 60.0) * r.ratePerHour;
-    final penalty = (overtimeMin / 60.0) * r.ratePerHour * 1.5;
-    final totalCost = baseCost + penalty;
+    final history = await RentalRepository().fetchRateHistory();
+    if (!mounted) return;
+    final charge = rentalChargeAt(r, now, history);
+    final overtimeMin = overtimeMinutesAt(r, now);
+    final baseCost = charge.base;
+    final penalty = charge.penalty;
+    final totalCost = charge.total;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -348,15 +375,15 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
             Text('Rider: ${row.riderDisplay}'),
             Text('Bike: ${row.bikeDisplay}'),
             const SizedBox(height: 10),
-            Text('Rental charge:  ₱${baseCost.toStringAsFixed(2)}'),
+            Text('Rental charge:  ${formatPeso(baseCost)}'),
             if (penalty > 0)
               Text(
-                'Penalty fee: ₱${penalty.toStringAsFixed(2)} '
-                '(${overtimeMin.toInt()} min overtime)',
+                'Penalty fee: ${formatPeso(penalty)} '
+                '(${overtimeMin.round()} min overtime)',
                 style: TextStyle(color: Theme.of(ctx).colorScheme.error),
               ),
             Text(
-              'Total: ₱${totalCost.toStringAsFixed(2)}',
+              'Total: ${formatPeso(totalCost)}',
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ],
@@ -385,7 +412,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Rental ended. Total: ₱${totalCost.toStringAsFixed(2)}',
+            'Rental ended. Total: ${formatPeso(totalCost)}',
           ),
         ),
       );
@@ -396,6 +423,19 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
         SnackBar(content: Text('Error: $e')),
       );
     }
+  }
+
+  String _planLabel(Rental r) {
+    final quoted = roundPeso((r.plannedMinutes / 60.0) * r.ratePerHour);
+    final booked = rentalChargeAt(r, DateTime.now(), _rateHistory).base;
+    final whole = (r.ratePerHour * 100).round() % 100 == 0;
+    final hourly = whole
+        ? r.ratePerHour.toStringAsFixed(0)
+        : r.ratePerHour.toStringAsFixed(2);
+    if ((booked - quoted).abs() < 0.5) {
+      return '${r.plannedMinutes}min · ₱$hourly/hr';
+    }
+    return '${r.plannedMinutes}min · ${formatPeso(booked)} booked';
   }
 
   @override
@@ -572,8 +612,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
                           ),
                           _InfoPair(
                             label: 'Plan',
-                            value: '${r.plannedMinutes}min '
-                                '· ₱${r.ratePerHour.toStringAsFixed(0)}/hr',
+                            value: _planLabel(r),
                           ),
                         ],
                       ),

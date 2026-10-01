@@ -8,6 +8,9 @@ import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../config/supabase_config.dart';
+import 'device_compass.dart';
+import 'ride_fix_gate.dart';
+import 'ride_gps_events.dart';
 
 /// Top-level entry used by [FlutterForegroundTask.startService].
 @pragma('vm:entry-point')
@@ -17,10 +20,13 @@ void rideForegroundStartCallback() {
 
 /// Sole Android GPS writer for an active rental.
 ///
-/// The task isolate keeps requesting fixes and uploading them while QRide is
-/// open, in another app, or with the screen locked. The UI isolate must not
-/// also open a Geolocator stream — two location clients stall the admin pin
-/// (red/yellow flicker) and then go silent once the screen turns off.
+/// The task isolate keeps a GPS listener registered and uploads fixes while
+/// QRide is open, in another app, or with the screen locked in a pocket.
+/// One-shot reads were returning a cached point (the compass still turned the
+/// pin) and then stopping after a long screen lock.
+///
+/// The UI isolate must not also open a Geolocator stream — two location
+/// clients stall the admin pin (red/yellow flicker).
 class RideForegroundTask {
   RideForegroundTask._();
 
@@ -61,6 +67,8 @@ class RideForegroundTask {
         autoRunOnMyPackageReplaced: false,
         allowWakeLock: true,
         allowWifiLock: true,
+        allowAutoRestart: true,
+        stopWithTask: false,
       ),
     );
   }
@@ -209,12 +217,18 @@ class RideLocationTaskHandler extends TaskHandler {
   String? _rentalId;
   String? _userId;
   bool _busy = false;
-  bool _legacyManager = false;
-  int _gpsMisses = 0;
+  bool _shareQueued = false;
+  bool _useFusedFallback = false;
+  int _listenGen = 0;
   Position? _lastPos;
   DateTime? _lastFixAt;
+  DateTime? _lastUploadAt;
+  DateTime? _lastRestartAt;
   double? _compassHeading;
   DateTime? _compassAt;
+  StreamSubscription<Position>? _gpsSub;
+  StreamSubscription<CompassReading>? _compassSub;
+  final RideFixGate _gate = RideFixGate();
 
   /// Consecutive 401/403 responses → rental ended or session dead; stop FGS.
   int _denyStreak = 0;
@@ -222,16 +236,25 @@ class RideLocationTaskHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     await _loadPersisted();
-    await _shareOnce();
+    _startCompass();
+    await _listenGps();
+    await _shareLatest();
   }
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    unawaited(_shareOnce());
+    unawaited(_shareLatest());
+    unawaited(_ensureGpsAlive());
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _listenGen++;
+    await _gpsSub?.cancel();
+    _gpsSub = null;
+    await _compassSub?.cancel();
+    _compassSub = null;
+  }
 
   @override
   void onReceiveData(Object data) {
@@ -270,39 +293,149 @@ class RideLocationTaskHandler extends TaskHandler {
     );
   }
 
-  Future<void> _shareOnce() async {
-    if (_busy) return;
+  void _startCompass() {
+    try {
+      final stream = DeviceCompass.events;
+      if (stream == null) return;
+      _compassSub = stream.listen((event) {
+        final h = event.heading;
+        if (h == null || h.isNaN) return;
+        var deg = h % 360;
+        if (deg < 0) deg += 360;
+        _compassHeading = deg;
+        _compassAt = DateTime.now();
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideFgTask] compass unavailable: $e');
+    }
+  }
+
+  /// One GPS subscription for the whole ride. Leaving it registered is what
+  /// keeps fixes arriving after QRide is backgrounded or the screen locks.
+  Future<void> _listenGps() async {
+    final gen = ++_listenGen;
+    await _gpsSub?.cancel();
+    if (gen != _listenGen) return;
+    _gpsSub = null;
+    _lastRestartAt = DateTime.now();
+
+    final stream = _useFusedFallback ? _fusedPositions() : RideGpsEvents.positions();
+    _gpsSub = stream.listen(
+      (pos) {
+        if (gen != _listenGen) return;
+        _onFix(pos);
+      },
+      onError: (Object e) {
+        if (gen != _listenGen) return;
+        // ignore: avoid_print
+        print('[RideFgTask] gps stream error: $e');
+        if (_useFusedFallback) return;
+        _useFusedFallback = true;
+        unawaited(_listenGps());
+      },
+      onDone: () {
+        if (gen != _listenGen) return;
+        // Let the watchdog re-subscribe. Restarting here loops if the
+        // stream closes as soon as it opens.
+      },
+    );
+  }
+
+  Stream<Position> _fusedPositions() {
+    return Geolocator.getPositionStream(
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        forceLocationManager: false,
+        intervalDuration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _onFix(Position pos) {
+    final now = DateTime.now().toUtc();
+    final age = now.difference(pos.timestamp.toUtc());
+    final fresh = age.isNegative || age <= const Duration(seconds: 20);
+    final kept = _gate.accept(
+      sampleTime: pos.timestamp,
+      lat: pos.latitude,
+      lng: pos.longitude,
+      accuracy: pos.accuracy,
+      now: now,
+    );
+    if (kept) _lastPos = pos;
+    // Only a recent satellite time proves the chip is still running.
+    // A cached point can be stored once, but it must not hold the pin green.
+    if (fresh) _lastFixAt = DateTime.now();
+    if (kept || fresh) unawaited(_shareLatest());
+  }
+
+  /// Re-subscribe if the chip goes quiet. A fused fallback that only repeats
+  /// a cached point is abandoned so a long screen-off ride returns to GPS.
+  Future<void> _ensureGpsAlive() async {
+    final now = DateTime.now();
+    final restarted = _lastRestartAt;
+    // Before any fix, switch to the fused provider quickly. After that, keep
+    // the longer cooldown so a quiet pocket ride is not restarted in a loop.
+    final cooldown = _lastPos == null
+        ? const Duration(seconds: 6)
+        : const Duration(seconds: 30);
+    if (restarted != null && now.difference(restarted) < cooldown) {
+      return;
+    }
+    final fixAt = _lastFixAt;
+    final quiet =
+        fixAt == null || now.difference(fixAt) > const Duration(seconds: 18);
+    if (!quiet && !_useFusedFallback) return;
+    if (!quiet &&
+        _useFusedFallback &&
+        restarted != null &&
+        now.difference(restarted) < const Duration(seconds: 60)) {
+      return;
+    }
+    _useFusedFallback = quiet ? !_useFusedFallback : false;
+    await _listenGps();
+  }
+
+  Future<void> _shareLatest() async {
+    if (_busy) {
+      _shareQueued = true;
+      return;
+    }
     if (_rentalId == null || _userId == null) await _loadPersisted();
 
     final rentalId = _rentalId;
     final userId = _userId;
     var token = _accessToken;
     if (rentalId == null || userId == null || token == null || token.isEmpty) {
-      // Cold start race: tokens not pushed yet — reload once more next tick.
       await _loadPersisted();
+      return;
+    }
+
+    final pos = _lastPos;
+    if (pos == null) return;
+    final fixAt = _lastFixAt;
+    final live = fixAt != null &&
+        DateTime.now().difference(fixAt) <= const Duration(seconds: 45);
+    // One cached seed is allowed. After that, only live GPS keeps sharing.
+    if (!live && _lastUploadAt != null) return;
+
+    final uploaded = _lastUploadAt;
+    if (uploaded != null &&
+        DateTime.now().difference(uploaded) < RideForegroundTask.shareEvery) {
       return;
     }
 
     _busy = true;
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) return;
-      final permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return;
-      }
-
-      // Fresh fix when possible; on screen-lock / cold GPS fall back to last
-      // known so admin still advances instead of stalling for an 8s timeout.
-      final pos = await _readPosition();
-      if (pos == null) return;
-
+      final heading = _headingFor(pos);
       var result = await _upsertLocation(
         rentalId: rentalId,
         userId: userId,
         token: token,
         pos: pos,
-        heading: _headingFor(pos),
+        heading: heading,
       );
 
       if (result == _UpsertResult.unauthorized) {
@@ -318,18 +451,25 @@ class RideLocationTaskHandler extends TaskHandler {
             userId: userId,
             token: refreshed,
             pos: pos,
-            heading: _headingFor(pos),
+            heading: heading,
           );
         }
       }
 
       if (result == _UpsertResult.ok) {
         _denyStreak = 0;
+        _lastUploadAt = DateTime.now();
+        // ignore: avoid_print
+        print(
+          '[RideFgTask] share ${pos.latitude.toStringAsFixed(5)},'
+          '${pos.longitude.toStringAsFixed(5)} '
+          'hdg=${heading?.toStringAsFixed(0) ?? '-'}',
+        );
         FlutterForegroundTask.sendDataToMain({
           'lat': pos.latitude,
           'lng': pos.longitude,
           'accuracy_m': pos.accuracy,
-          'heading': _headingFor(pos),
+          'heading': heading,
           'at': DateTime.now().toUtc().toIso8601String(),
         });
         return;
@@ -338,7 +478,6 @@ class RideLocationTaskHandler extends TaskHandler {
       if (result == _UpsertResult.forbidden ||
           result == _UpsertResult.unauthorized) {
         _denyStreak++;
-        // Rental ended (RLS) or session unusable — drop the notice.
         if (_denyStreak >= 2) {
           // ignore: avoid_print
           print('[RideFgTask] stopping — rental ended or auth rejected');
@@ -354,74 +493,21 @@ class RideLocationTaskHandler extends TaskHandler {
       print('[RideFgTask] share failed: $e');
     } finally {
       _busy = false;
-    }
-  }
-
-  /// One GPS client for the whole ride. A short miss reuses the last fix so
-  /// the admin pin does not flip yellow; a longer outage stops refreshing.
-  Future<Position?> _readPosition() async {
-    try {
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: _oneShotSettings(),
-      );
-      _gpsMisses = 0;
-      _lastPos = pos;
-      _lastFixAt = DateTime.now();
-      return pos;
-    } catch (e) {
-      // ignore: avoid_print
-      print('[RideFgTask] gps read failed: $e');
-      _gpsMisses++;
-      if (_gpsMisses >= 2 &&
-          defaultTargetPlatform == TargetPlatform.android) {
-        _legacyManager = !_legacyManager;
-        _gpsMisses = 0;
-        // ignore: avoid_print
-        print('[RideFgTask] location manager legacy=$_legacyManager');
+      if (_shareQueued && _rentalId != null) {
+        _shareQueued = false;
+        unawaited(_shareLatest());
       }
-      final last = _lastPos;
-      final at = _lastFixAt;
-      if (last != null &&
-          at != null &&
-          DateTime.now().difference(at) <= const Duration(seconds: 15)) {
-        return last;
-      }
-      return null;
     }
-  }
-
-  LocationSettings _oneShotSettings() {
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      // No Geolocator foreground notification here — this isolate already
-      // runs inside the rental location service. A second service stalls GPS.
-      return AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        forceLocationManager: _legacyManager,
-        intervalDuration: const Duration(seconds: 2),
-        timeLimit: const Duration(seconds: 10),
-      );
-    }
-    return const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      timeLimit: Duration(seconds: 10),
-    );
   }
 
   double? _headingFor(Position pos) {
-    // Compass turns the pin while QRide is on screen. Once the phone is
-    // locked the sensor stops, so direction of travel comes from GPS.
-    final compass = _compassHeading;
-    final compassAt = _compassAt;
-    if (compass != null &&
-        compassAt != null &&
-        DateTime.now().difference(compassAt) <= const Duration(seconds: 5) &&
-        compass >= 0 &&
-        compass <= 360) {
-      return compass;
-    }
-    final h = pos.heading;
-    if (h.isNaN || h < 0 || h > 360) return null;
-    return h;
+    return chooseRideHeading(
+      now: DateTime.now(),
+      compass: _compassHeading,
+      compassAt: _compassAt,
+      speedMps: pos.speed,
+      gpsHeading: pos.heading < 0 ? null : pos.heading,
+    );
   }
 
   Future<_UpsertResult> _upsertLocation({

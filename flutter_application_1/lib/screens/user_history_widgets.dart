@@ -127,13 +127,13 @@ class _HistoryCard extends StatelessWidget {
                         if (cost != null && isEnded)
                           _InfoChip(
                             icon: Icons.payments_outlined,
-                            label: '₱${cost.toStringAsFixed(2)}',
+                            label: formatPeso(cost),
                             color: penalty > 0 ? cs.error : null,
                           ),
                         if (penalty > 0 && isEnded)
                           _InfoChip(
                             icon: Icons.warning_amber_rounded,
-                            label: '+₱${penalty.toStringAsFixed(2)} penalty',
+                            label: '+${formatPeso(penalty)} penalty',
                             color: cs.error,
                           ),
                       ],

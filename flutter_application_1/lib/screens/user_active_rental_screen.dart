@@ -15,6 +15,8 @@ import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
 import '../services/rental_repository.dart';
 import '../services/supabase_client.dart';
+import '../utils/peso.dart';
+import '../utils/rental_billing.dart';
 import '../widgets/heading_map_pin.dart';
 import '../widgets/qride_map_tiles.dart';
 import '../widgets/user_portal_chrome.dart';
@@ -38,10 +40,12 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   bool _followUser = true;
 
   Rental? _rental;
+  List<HourlyRateChange> _rateHistory = const [];
   bool _loading = true;
 
   // Timer state
   Timer? _ticker;
+  Timer? _historyTimer;
   DateTime _now = DateTime.now();
 
   // Notification sentinels (timer warnings; approve/end via inbox Realtime)
@@ -61,6 +65,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _historyTimer?.cancel();
     _channel?.unsubscribe();
     _tracking?.position.removeListener(_onPositionUpdate);
     _tracking?.heading.removeListener(_onPositionUpdate);
@@ -92,8 +97,17 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   }
 
   Future<void> _init() async {
-    await _fetchRental();
+    await Future.wait([_fetchRental(), _loadRateHistory()]);
+    _historyTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(_loadRateHistory());
+    });
     _subscribeRealtime();
+  }
+
+  Future<void> _loadRateHistory() async {
+    final history = await _repo.fetchRateHistory();
+    if (!mounted) return;
+    setState(() => _rateHistory = history);
   }
 
   Future<void> _fetchRental() async {
@@ -260,6 +274,8 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       builder: (ctx) => ExtendTimeSheet(
         currentPlannedMinutes: rental.plannedMinutes,
         ratePerHour: rental.ratePerHour,
+        approvedAt: rental.approvedAt,
+        history: _rateHistory,
       ),
     );
     if (extra == null || !mounted) return;
@@ -277,7 +293,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Extended by $extra min. New estimate ₱${(_rental!.estimatedCost ?? 0).toStringAsFixed(2)}',
+            'Extended by $extra min. New estimate ${formatPeso(_rental!.estimatedCost ?? 0)}',
           ),
         ),
       );
@@ -459,7 +475,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   _RentalInfoRow(
                     icon: Icons.payments_outlined,
                     label: 'Rental charge',
-                    value: '₱${(rental.estimatedCost ?? 0).toStringAsFixed(2)}',
+                    value: formatPeso(
+                      rentalChargeAt(rental, _now, _rateHistory).base,
+                    ),
                   ),
                   _RentalInfoRow(
                     icon: Icons.schedule_rounded,
@@ -509,9 +527,10 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       remaining = endTime.difference(_now);
     }
 
-    final elapsedCost = rental.currentCost(_now);
-    final penalty = rental.penaltyAmount(_now);
-    final totalCost = elapsedCost + penalty;
+    final charge = rentalChargeAt(rental, _now, _rateHistory);
+    final elapsedCost = charge.base;
+    final penalty = charge.penalty;
+    final totalCost = charge.total;
 
     final overtimeMin = rental.overtimeMinutes(_now);
 

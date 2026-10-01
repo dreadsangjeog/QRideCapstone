@@ -24,7 +24,7 @@ BEGIN
     planned_minutes = planned_minutes + p_extra_mins,
     estimated_cost = round(
       ((planned_minutes + p_extra_mins)::numeric / 60.0) * rate_per_hour,
-      2
+      0
     )
   WHERE id = p_rental_id
     AND user_id = auth.uid()

@@ -108,7 +108,7 @@ class _RequestCard extends StatelessWidget {
                 _DetailChip(
                   icon: Icons.payments_outlined,
                   label:
-                      '₱${(hours * r.ratePerHour).toStringAsFixed(2)}',
+                      formatPeso(r.estimatedCost ?? (hours * r.ratePerHour)),
                   sublabel: 'Charge',
                 ),
                 _DetailChip(

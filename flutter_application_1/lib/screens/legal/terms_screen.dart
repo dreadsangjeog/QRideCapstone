@@ -35,7 +35,7 @@ class TermsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'By creating an account or using QRide you agree to these terms. Last updated September 2026.',
+                  'By creating an account or using QRide you agree to these terms. Last updated October 2026.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     height: 1.4,
@@ -44,44 +44,51 @@ class TermsScreen extends StatelessWidget {
                 const SizedBox(height: 18),
                 const _TermCard(
                   icon: Icons.gavel_outlined,
-                  title: 'Campus ride rules',
+                  title: 'How a rental works',
                   body:
-                      'Bikes are for campus use only. Ride safely, return the bike on time, and do not leave it unattended outside an approved area. You are responsible for the bike while your rental is active or pending.',
+                      'You can rent only after staff verify your identity. Scan the bike QR or enter the code on the bike, then choose a time from 30 minutes up to 8 hours. The request stays pending until staff approve it, or you cancel it. The timer starts when staff approve. You are responsible for the bike from that request until staff end the ride. You cannot end the ride yourself. While it is active you may add at least 15 more minutes. Ride safely and return the bike for staff to close the rental.',
                 ),
                 const SizedBox(height: 10),
                 const _TermCard(
-                  icon: Icons.warning_amber_rounded,
-                  title: 'Logging out during a rental',
+                  icon: Icons.payments_outlined,
+                  title: 'Fees',
                   body:
-                      'If you log out, close the app, turn off the phone, or disconnect from the internet while a rental is pending or active, QRide may treat that as suspicious activity. Admins can review your identity documents and last known location. Do not log out until you have returned the bike and the rental has ended.',
+                      'You pay for the full time you choose. Ending the rental early does not lower the fee. Adding time increases the charge for the new total. After the planned time, the overtime penalty is 1.5× the hourly rate. If a charge is not a whole peso, including the penalty, it is rounded to the nearest peso. The amount due is shown before you send a request and on your ride screen. Staff record that amount when they end the ride. The app does not charge a card. If staff change the hourly rate, rentals already ended keep the amount that was recorded. From that moment, new requests use the new rate, and a ride that is still open uses the new rate for the rest of the booked time and for overtime.',
                 ),
                 const SizedBox(height: 10),
                 const _TermCard(
                   icon: Icons.location_on_outlined,
                   title: 'Location during a ride',
                   body:
-                      'While a rental is active we collect your GPS location about every 3 seconds so staff can see the bike on the admin map. Location sharing stops when the rental ends. We do not track you when you are not renting.',
+                      'Location sharing starts only after staff approve the rental, and stops when they end it. We do not track you while you are signed in with no active rental, or while a request is still pending. During an active ride, QRide reads GPS about every 3 seconds and the direction of travel so staff can see the bike on the map. While the bike is moving, direction comes from travel. While it is stopped, direction can come from the phone compass. A “Rental in progress” notice stays on. Sharing continues if you leave QRide, switch apps, lock the screen, or put the phone in a pocket. Keep location and internet on, and leave that notice in place. QRide asks only for location while you use the app. It does not ask for “Allow all the time” or a battery-optimization exception. If the phone is off, GPS is off, or updates stop, staff are notified and can still see the last point.',
+                ),
+                const SizedBox(height: 10),
+                const _TermCard(
+                  icon: Icons.warning_amber_rounded,
+                  title: 'Logging out during a rental',
+                  body:
+                      'Logging out while a request is pending or a rental is active notifies staff. They may review your identity documents and last known location. Do not log out until the bike is back and staff have ended the ride. Leaving the app or locking the phone is not logging out, and location sharing is meant to continue.',
                 ),
                 const SizedBox(height: 10),
                 const _TermCard(
                   icon: Icons.badge_outlined,
                   title: 'Identity verification',
                   body:
-                      'You must complete ID and live-face verification before renting. Photos of your ID and selfies are stored privately and used only to confirm who you are and to recover a bike that is not returned. They are not sold or used for advertising.',
+                      'Before you can rent, you submit your name, birthdate, a photo of your ID, and a live face check, including a front view and side turns. Staff review this before your account is verified. Those images are stored privately and used only to confirm who you are and to recover a bike that is not returned. They are not sold or used for advertising.',
                 ),
                 const SizedBox(height: 10),
                 const _TermCard(
                   icon: Icons.lock_outline_rounded,
                   title: 'Your privacy',
                   body:
-                      'We store your username, email, verification images, rental history, and ride locations on a secured database. Only you and authorized QRide administrators can access this data. You can delete your account in Profile → Delete account after all rentals are settled. That removes your login, verification photos, and personal ride records.',
+                      'We store your username, email, verification images, notifications, rental history, and ride locations on a secured database. Only you and authorized QRide staff can access this data. You can delete your account in Profile → Delete account after every rental is settled. You cannot delete it while a request is pending or a rental is active. Deleting removes your login, verification photos, notifications, and ride locations. Settled rentals stay in staff reports and history without your name, shown as a deleted account. This cannot be undone.',
                 ),
                 const SizedBox(height: 10),
                 const _TermCard(
                   icon: Icons.notifications_outlined,
                   title: 'Alerts',
                   body:
-                      'QRide may send in-app and device alerts for approvals, time remaining, overtime, and receipts. If your signal drops during a ride, administrators may be notified so they can check the bike.',
+                      'QRide may send in-app and device alerts when staff approve or reject a request, when about 5 minutes remain, when overtime starts, and for your ride record. Staff are also notified if you log out during an open rental, or if the bike’s location stops updating.',
                 ),
               ],
             ),

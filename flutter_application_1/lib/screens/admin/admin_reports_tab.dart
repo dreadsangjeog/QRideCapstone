@@ -11,6 +11,11 @@ import 'admin_report_charts.dart';
 final _peso = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
 final _pesoExact = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
 
+String _feeLabel(double rate) {
+  final whole = (rate * 100).round() % 100 == 0;
+  return whole ? _peso.format(rate) : _pesoExact.format(rate);
+}
+
 const _green = Color(0xFF22C55E);
 const _violet = Color(0xFF7C3AED);
 const _cyan = Color(0xFF0891B2);
@@ -223,6 +228,16 @@ class _ReportsBody extends StatelessWidget {
                       color: cs.onSurfaceVariant,
                     ),
                   ),
+                  if (stats.currentHourlyRate != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Hourly fee is ${_feeLabel(stats.currentHourlyRate!)}. '
+                      'Each completed ride keeps the amount recorded when it ended.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

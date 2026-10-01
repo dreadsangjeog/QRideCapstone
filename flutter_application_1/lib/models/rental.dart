@@ -1,8 +1,10 @@
+import '../utils/peso.dart';
+
 class Rental {
   Rental({
     required this.id,
     required this.bikeId,
-    required this.userId,
+    this.userId,
     required this.startedAt,
     this.endedAt,
     this.approvedAt,
@@ -16,7 +18,7 @@ class Rental {
 
   final String id;
   final String? bikeId;
-  final String userId;
+  final String? userId;
   final DateTime startedAt;   // When user submitted the request.
   final DateTime? endedAt;
   final DateTime? approvedAt; // When admin approved — countdown starts here.
@@ -39,7 +41,7 @@ class Rental {
 
   /// Fixed charge for the chosen slot. Returning early does not lower it.
   double currentCost(DateTime now) {
-    return estimatedCost ?? (plannedMinutes / 60.0) * ratePerHour;
+    return roundPeso(estimatedCost ?? (plannedMinutes / 60.0) * ratePerHour);
   }
 
   /// Overtime minutes (0 if still within planned duration).
@@ -53,14 +55,14 @@ class Rental {
   double penaltyAmount(DateTime now) {
     final ot = overtimeMinutes(now);
     if (ot <= 0) return 0;
-    return (ot / 60.0) * ratePerHour * 1.5;
+    return roundPeso((ot / 60.0) * ratePerHour * 1.5);
   }
 
   factory Rental.fromJson(Map<String, dynamic> json) {
     return Rental(
       id:            json['id'].toString(),
       bikeId:        json['bike_id']?.toString(),
-      userId:        json['user_id'].toString(),
+      userId:        json['user_id']?.toString(),
       startedAt:     DateTime.parse(json['started_at'].toString()),
       endedAt:       json['ended_at'] == null
                        ? null

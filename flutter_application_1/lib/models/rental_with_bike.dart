@@ -25,12 +25,20 @@ class RentalWithBike {
     return parts.join(' ');
   }
 
+  /// True after the rider deleted their account. The ride row is kept.
+  bool get accountDeleted {
+    final id = rental.userId?.trim();
+    return id == null || id.isEmpty;
+  }
+
   /// Legal name when KYC has it, otherwise the login username.
+  /// A removed account is labeled so the ride still shows in history.
   String get riderDisplay {
+    if (accountDeleted) return 'Deleted account';
     final name = legalName;
     if (name.isNotEmpty) return name;
     if (username?.trim().isNotEmpty == true) return username!.trim();
-    final uid = rental.userId;
+    final uid = rental.userId!.trim();
     return uid.length > 8 ? uid.substring(0, 8) : uid;
   }
 

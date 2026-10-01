@@ -1,6 +1,35 @@
 -- Rider self-service account deletion.
--- Run once in the Supabase SQL Editor.
+-- Settled rides stay for staff reports. The account name is cleared.
+-- Prefer supabase/migrations/038_keep_rentals_on_account_delete.sql if
+-- delete_kyc_files_for_user already exists.
 -- Hard block: pending or active rental (bike not returned) cannot be deleted.
+
+alter table public.rentals
+  alter column user_id drop not null;
+
+do $$
+declare
+  c name;
+begin
+  select con.conname into c
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'rentals'
+    and con.contype = 'f'
+    and pg_get_constraintdef(con.oid) ilike '%auth.users%';
+  if c is not null then
+    execute format('alter table public.rentals drop constraint %I', c);
+  end if;
+end $$;
+
+alter table public.rentals
+  drop constraint if exists rentals_user_id_fkey;
+
+alter table public.rentals
+  add constraint rentals_user_id_fkey
+  foreign key (user_id) references auth.users(id) on delete set null;
 
 create or replace function public.delete_my_account()
 returns void
@@ -55,30 +84,18 @@ begin
   delete from public.notifications
   where user_id = v_uid;
 
-  -- Only settled rides may be removed. Open rentals are never deleted.
+  -- Drop the rider's GPS trail. Settled rental rows stay for reports.
   delete from public.rental_locations
-  where user_id = v_uid
-    and rental_id in (
-      select id from public.rentals
-      where user_id = v_uid and status in ('ended', 'rejected')
-    );
+  where user_id = v_uid;
 
   delete from public.rental_last_location
-  where user_id = v_uid
-    and rental_id in (
-      select id from public.rentals
-      where user_id = v_uid and status in ('ended', 'rejected')
-    );
+  where user_id = v_uid;
 
-  delete from public.rentals
-  where user_id = v_uid
-    and status in ('ended', 'rejected');
-
-  -- Final guard: any leftover rental (including a race insert) aborts everything.
   if exists (
     select 1
     from public.rentals r
     where r.user_id = v_uid
+      and r.status in ('pending', 'active')
   ) then
     raise exception 'open_rental';
   end if;
@@ -91,6 +108,7 @@ begin
   delete from public.profiles
   where id = v_uid;
 
+  -- Settled rentals remain. user_id is cleared by ON DELETE SET NULL.
   delete from auth.users
   where id = v_uid;
 end;

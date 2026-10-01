@@ -51,6 +51,7 @@ class ReportSnapshot {
     required this.durationBuckets,
     required this.topBikes,
     required this.rows,
+    this.currentHourlyRate,
   });
 
   final int days;
@@ -71,6 +72,9 @@ class ReportSnapshot {
 
   /// Completed rentals in the window, oldest return first (what the Excel lists).
   final List<RentalWithBike> rows;
+
+  /// Hourly fee in effect now. Null when the setting has not been saved.
+  final double? currentHourlyRate;
 
   double get avgPerDay => days == 0 ? 0 : completedCount / days;
 
@@ -115,9 +119,19 @@ class AnalyticsRepository {
     return minutes;
   }
 
-  static double collectedOf(Rental r) {
-    final base = r.actualCost ?? r.estimatedCost ?? 0;
-    return base + (r.penaltyFee ?? 0);
+  static double collectedOf(Rental r) => collectedAmount(r);
+
+  Future<double?> _currentHourlyRate() async {
+    try {
+      final row = await SupabaseClientProvider.client
+          .from('rental_settings')
+          .select('rate_per_hour')
+          .eq('id', 1)
+          .maybeSingle();
+      final rate = (row?['rate_per_hour'] as num?)?.toDouble();
+      if (rate != null && rate > 0) return rate;
+    } catch (_) {}
+    return null;
   }
 
   static String _bucketFor(double minutes) {
@@ -132,6 +146,7 @@ class AnalyticsRepository {
     final start = window.start;
     final endExclusive = window.endExclusive;
     final fromIso = start.toUtc().toIso8601String();
+    final rateFuture = _currentHourlyRate();
 
     final raw = await SupabaseClientProvider.client
         .from('rentals')
@@ -247,6 +262,7 @@ class AnalyticsRepository {
       durationBuckets: durationBuckets,
       topBikes: topBikes,
       rows: rows,
+      currentHourlyRate: await rateFuture,
     );
   }
 
@@ -282,6 +298,13 @@ class AnalyticsRepository {
       ],
       [TextCellValue('Total ride minutes'), DoubleCellValue(snapshot.totalRideMinutes)],
       [TextCellValue('Collected (₱)'), DoubleCellValue(snapshot.collected)],
+      [
+        TextCellValue('Hourly fee now (₱)'),
+        if (snapshot.currentHourlyRate == null)
+          TextCellValue('')
+        else
+          DoubleCellValue(snapshot.currentHourlyRate!),
+      ],
       [TextCellValue('Penalties included (₱)'), DoubleCellValue(snapshot.penalties)],
       [TextCellValue('Open pending now'), IntCellValue(snapshot.openPending)],
       [TextCellValue('Open active now'), IntCellValue(snapshot.openActive)],

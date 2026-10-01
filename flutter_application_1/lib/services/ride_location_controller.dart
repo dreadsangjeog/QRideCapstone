@@ -12,9 +12,10 @@ import 'supabase_client.dart';
 
 /// Keeps rental GPS → admin uploads alive for the whole ride.
 ///
-/// Android uses one writer: [RideForegroundTask]. Its isolate keeps reading
-/// GPS and uploading while QRide is open, in another app, or with the screen
-/// locked. The UI [LocationTrackingService] only mirrors those fixes.
+/// Android uses one writer: [RideForegroundTask]. Its isolate keeps a GPS
+/// listener registered and uploads while QRide is open, in another app, or
+/// with the screen locked in a pocket. The UI [LocationTrackingService] only
+/// mirrors those fixes.
 ///
 /// A second Geolocator stream beside that task stalled uploads (admin pin
 /// flickering red/yellow) and then stopped entirely once the UI isolate was
@@ -144,6 +145,11 @@ class RideLocationController with WidgetsBindingObserver {
     try {
       final rental = await _repo.fetchMyActiveRental();
       if (rental != null && rental.isActive) {
+        // The map already has a point. Write it now so staff see the pin
+        // without waiting for the rental GPS listener's first satellite fix.
+        if (_rentalId != rental.id) {
+          unawaited(tracking.seedAdminFromLastKnown(rental.id));
+        }
         if (_usesForegroundWriter) {
           try {
             // Drop any UI Geolocator stream before the task isolate reads GPS.

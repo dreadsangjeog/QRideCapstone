@@ -92,15 +92,20 @@ class _TorchFab extends StatelessWidget {
 }
 
 class _DurationPickerSheet extends StatefulWidget {
-  const _DurationPickerSheet({required this.bike});
+  const _DurationPickerSheet({
+    required this.bike,
+    required this.ratePerHour,
+  });
+
   final Bike bike;
+  final double ratePerHour;
 
   @override
   State<_DurationPickerSheet> createState() => _DurationPickerSheetState();
 }
 
 class _DurationPickerSheetState extends State<_DurationPickerSheet> {
-  static const double _rate = RentalRepository.kRatePerHour;
+  double get _rate => widget.ratePerHour;
 
   static const _presets = [
     (label: '30 min', minutes: 30),
@@ -113,17 +118,75 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
 
   int _selectedMinutes = 60;
 
-  double get _cost => (_selectedMinutes / 60.0) * _rate;
+  double get _cost => roundPeso((_selectedMinutes / 60.0) * _rate);
+
+  void _openPhoto(String url) {
+    final label = widget.bike.label?.trim().isNotEmpty == true
+        ? widget.bike.label!.trim()
+        : 'Bike ${widget.bike.code}';
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              InteractiveViewer(
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, _, _) => const SizedBox(
+                    height: 180,
+                    child: Center(child: Icon(Icons.broken_image_outlined)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final bottomPad = MediaQuery.paddingOf(context).bottom;
+    final photoUrl = AdminRepository.publicPhotoUrl(widget.bike.photoPath);
+    final bikeName = widget.bike.label?.trim().isNotEmpty == true
+        ? widget.bike.label!.trim()
+        : 'Bike ${widget.bike.code}';
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.92;
 
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
-      child: Column(
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -144,27 +207,57 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              BikePhotoView(
-                url: AdminRepository.publicPhotoUrl(widget.bike.photoPath),
-                size: 64,
-                radius: 14,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  widget.bike.label?.trim().isNotEmpty == true
-                      ? '${widget.bike.label} (${widget.bike.code})'
-                      : 'Bike ${widget.bike.code}',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: cs.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
+          if (photoUrl != null) ...[
+            Semantics(
+              label: 'Photo of $bikeName',
+              child: Material(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(16),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => _openPhoto(photoUrl),
+                  child: AspectRatio(
+                    aspectRatio: 4 / 3,
+                    child: Image.network(
+                      photoUrl,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return const Center(
+                          child: CircularProgressIndicator(),
+                        );
+                      },
+                      errorBuilder: (_, _, _) => Icon(
+                        Icons.broken_image_outlined,
+                        color: cs.onSurfaceVariant,
+                        size: 40,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap the photo to enlarge',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Text(
+            bikeName,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          Text(
+            widget.bike.code,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 16),
           Container(
@@ -187,7 +280,7 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '₱${_rate.toStringAsFixed(0)} / hour',
+                  '₱${(_rate * 100).round() % 100 == 0 ? _rate.toStringAsFixed(0) : _rate.toStringAsFixed(2)} / hour',
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: cs.primary,
                     fontWeight: FontWeight.w700,
@@ -245,7 +338,7 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
                           ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     Text(
-                      '₱${_cost.toStringAsFixed(2)}',
+                      formatPeso(_cost),
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                         color: cs.primary,
@@ -278,7 +371,8 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
           const SizedBox(height: 8),
           Text(
             'This charge is fixed for the time you pick. Returning early does not lower it. '
-            'Overtime is extra at 1.5×. The clock starts only after staff approve.',
+            'Overtime is extra at 1.5×. Amounts are rounded to the nearest peso. '
+            'The clock starts only after staff approve.',
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: cs.onSurfaceVariant),
           ),
@@ -300,6 +394,7 @@ class _DurationPickerSheetState extends State<_DurationPickerSheet> {
             child: const Text('Cancel'),
           ),
         ],
+        ),
       ),
     );
   }

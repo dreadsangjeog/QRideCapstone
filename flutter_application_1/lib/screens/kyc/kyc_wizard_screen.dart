@@ -7,6 +7,7 @@ import '../../utils/logout_guard.dart';
 import '../../services/kyc_auto_match.dart';
 import '../../services/kyc_repository.dart';
 import '../../theme/brand.dart';
+import '../../widgets/birthdate_picker.dart';
 import '../../widgets/user_portal_chrome.dart';
 import 'kyc_face_match_panel.dart';
 import 'kyc_id_capture_screen.dart';
@@ -522,7 +523,7 @@ class _IntroPage extends StatelessWidget {
                     : () async {
                   final initial = DateTime.tryParse(birthdate.text) ??
                       DateTime(2004, 1, 1);
-                  final picked = await showDatePicker(
+                  final picked = await showBirthdatePicker(
                     context: context,
                     initialDate: initial,
                     firstDate: DateTime(1920),
