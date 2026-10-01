@@ -42,6 +42,7 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
   bool _busy = false;
   String? _error;
   bool _nameLocked = false;
+  bool _waitingForStaff = false;
   Future<KycAutoMatchResult>? _faceWork;
 
   bool get _hasSelfies => _selfieFrontBytes != null;
@@ -62,7 +63,10 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
       _birthdate.text = (p.birthdate ?? '').length >= 10
           ? p.birthdate!.substring(0, 10)
           : (p.birthdate ?? '');
-      setState(() => _nameLocked = p.personalDetailsLocked);
+      setState(() {
+        _nameLocked = p.personalDetailsLocked;
+        _waitingForStaff = p.isPending;
+      });
     } catch (_) {}
   }
 
@@ -233,6 +237,52 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final rejected = widget.rejectedNote?.trim();
+    if (_waitingForStaff) {
+      return Scaffold(
+        backgroundColor: QrideBrand.mist,
+        appBar: AppBar(
+          title: const Text('Identity verification'),
+          actions: [
+            TextButton(
+              onPressed: () => confirmAndSignOut(context),
+              child: const Text('Log out'),
+            ),
+          ],
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+          children: [
+            Text(
+              'Waiting for staff',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Your ID is already submitted. Name and birthdate stay as entered. You do not need to continue verification.',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: cs.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _LockedSummary(
+              firstName: _firstName.text,
+              middleName: _middleName.text,
+              lastName: _lastName.text,
+              birthdate: _birthdate.text,
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: () => Navigator.of(context).maybePop(),
+              child: const Text('Back to QRide'),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: QrideBrand.mist,
@@ -468,17 +518,15 @@ class _IntroPage extends StatelessWidget {
         const SizedBox(height: 20),
         Form(
           key: formKey,
-          child: Column(
+          child: nameLocked
+              ? _LockedSummary(
+                  firstName: firstName.text,
+                  middleName: middleName.text,
+                  lastName: lastName.text,
+                  birthdate: birthdate.text,
+                )
+              : Column(
             children: [
-              if (nameLocked) ...[
-                Text(
-                  'Your name and birthdate are locked because they already matched the ID.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
               TextFormField(
                 controller: firstName,
                 enabled: !nameLocked,
@@ -599,6 +647,63 @@ class _IntroPage extends StatelessWidget {
           onPressed: onDeleteAccount,
           child: const Text('Delete account'),
         ),
+      ],
+    );
+  }
+}
+
+class _LockedSummary extends StatelessWidget {
+  const _LockedSummary({
+    required this.firstName,
+    required this.middleName,
+    required this.lastName,
+    required this.birthdate,
+  });
+
+  final String firstName;
+  final String middleName;
+  final String lastName;
+  final String birthdate;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    String shown(String value) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? '—' : trimmed;
+    }
+
+    Widget row(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              shown(value),
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        row('First name', firstName),
+        row('Middle name', middleName),
+        row('Last name', lastName),
+        row('Birthdate', birthdate),
       ],
     );
   }

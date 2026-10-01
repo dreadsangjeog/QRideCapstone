@@ -10,6 +10,8 @@ import '../services/admin_repository.dart';
 import '../services/auth_service.dart';
 import '../services/kyc_repository.dart';
 import '../services/rental_repository.dart';
+import '../services/ride_foreground_task.dart';
+import '../services/supabase_client.dart';
 import '../utils/location_access.dart';
 import '../utils/peso.dart';
 import '../utils/network_errors.dart';
@@ -270,6 +272,24 @@ class _UserScanScreenState extends State<UserScanScreen>
     }
   }
 
+  Future<void> _armApprovalWatcher(String rentalId) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    final user = SupabaseClientProvider.client.auth.currentUser;
+    final session = SupabaseClientProvider.client.auth.currentSession;
+    if (user == null || session == null) return;
+    try {
+      await RideForegroundTask.ensureWaiting(
+        rentalId: rentalId,
+        userId: user.id,
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Scan] waiting location service failed: $e');
+    }
+  }
+
   Future<void> _startRentalIfAvailable(Bike bike) async {
     if (bike.status != 'available') {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -357,10 +377,11 @@ class _UserScanScreenState extends State<UserScanScreen>
         await _restartScannerIfNeeded();
         return;
       }
-      await _rentalRepo.requestRental(
+      final rentalId = await _rentalRepo.requestRental(
         bikeId: bike.id,
         plannedMinutes: planned,
       );
+      await _armApprovalWatcher(rentalId);
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
       if (Navigator.of(context).canPop()) {
@@ -370,8 +391,10 @@ class _UserScanScreenState extends State<UserScanScreen>
       }
       messenger.showSnackBar(
         const SnackBar(
-          content: Text('Request submitted! Waiting for admin approval.'),
-          duration: Duration(seconds: 4),
+          content: Text(
+            'Request submitted. Leave the “Rental requested” notice on so location can start when staff approve, even if you leave or close QRide.',
+          ),
+          duration: Duration(seconds: 6),
         ),
       );
     } catch (e) {

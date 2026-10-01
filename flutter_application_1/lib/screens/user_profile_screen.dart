@@ -253,7 +253,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 saving: _savingName,
                 onSave: _saveName,
               ),
-              if (_profile != null && !_profile!.isVerified) ...[
+              if (_profile != null && _profile!.isPending) ...[
+                const SizedBox(height: 12),
+                const _WaitingReviewNotice(),
+              ] else if (_profile != null && !_profile!.isVerified) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: () async {
@@ -261,23 +264,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     if (kyc != null && kyc.profile.needsAction) {
                       await kyc.openWizard(context);
                       await _loadProfile();
-                      return;
                     }
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Staff are still checking your ID. You will get a notification when you are verified.',
-                        ),
-                      ),
-                    );
                   },
                   icon: const Icon(Icons.verified_user_outlined),
-                  label: Text(
-                    _profile!.needsAction
-                        ? 'Continue ID verification'
-                        : 'Waiting for staff review',
-                  ),
+                  label: const Text('Continue ID verification'),
                 ),
               ],
               const SizedBox(height: 28),
@@ -543,11 +533,22 @@ class _LegalNameCard extends StatelessWidget {
                 children: [
                   Text(
                     locked
-                        ? 'Locked after the ID check. This name was matched to your ID and cannot be changed.'
+                        ? 'Submitted with your ID. These details stay as staff review them.'
                         : 'Used to match the ID you upload. You can edit it until you photograph your ID.',
                     style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
                   ),
                   const SizedBox(height: 12),
+                  if (locked) ...[
+                    _LockedDetail(label: 'First name', value: firstName.text),
+                    _LockedDetail(
+                      label: 'Middle name',
+                      value: middleName.text.trim().isEmpty
+                          ? '—'
+                          : middleName.text.trim(),
+                    ),
+                    _LockedDetail(label: 'Last name', value: lastName.text),
+                    _LockedDetail(label: 'Birthdate', value: birthdate.text),
+                  ] else ...[
                   TextFormField(
                     controller: firstName,
                     enabled: !locked && !saving,
@@ -609,6 +610,7 @@ class _LegalNameCard extends StatelessWidget {
                             birthdate.text = '${picked.year}-$m-$d';
                           },
                   ),
+                  ],
                   if (!locked) ...[
                     const SizedBox(height: 14),
                     FilledButton(
@@ -622,6 +624,81 @@ class _LegalNameCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _LockedDetail extends StatelessWidget {
+  const _LockedDetail({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final shown = value.trim().isEmpty ? '—' : value.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            shown,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WaitingReviewNotice extends StatelessWidget {
+  const _WaitingReviewNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return PolishedSectionCard(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.hourglass_top_rounded, color: cs.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Waiting for staff',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your ID is submitted. Nothing else to verify. Staff will notify you when you can rent.',
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      height: 1.35,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

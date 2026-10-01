@@ -189,9 +189,11 @@ class _MapBell extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark
-        ? Colors.white.withValues(alpha: 0.10)
-        : Colors.white.withValues(alpha: 0.48);
-    final rim = Colors.white.withValues(alpha: isDark ? 0.18 : 0.78);
+        ? const Color(0xFF1B2433)
+        : Colors.white.withValues(alpha: 0.92);
+    final rim = isDark
+        ? Colors.white.withValues(alpha: 0.72)
+        : Colors.white.withValues(alpha: 0.78);
     return DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -210,7 +212,7 @@ class _MapBell extends StatelessWidget {
             color: bg,
             shape: CircleBorder(side: BorderSide(color: rim)),
             child: NotificationBellButton(
-              color: isDark ? const Color(0xFFE8EEF6) : const Color(0xFF111827),
+              color: isDark ? Colors.white : const Color(0xFF111827),
               alignBelow: true,
             ),
           ),

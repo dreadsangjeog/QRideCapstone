@@ -34,6 +34,13 @@ class RideForegroundTask {
   static const _kUserId = 'qride_user_id';
   static const _kAccessToken = 'qride_access_token';
   static const _kRefreshToken = 'qride_refresh_token';
+  static const _kMode = 'qride_mode';
+
+  /// Service is up, but GPS stays off until staff approve.
+  static const modeWait = 'wait';
+
+  /// Service is uploading location for an active rental.
+  static const modeShare = 'share';
 
   static const shareEvery = Duration(seconds: 3);
 
@@ -88,6 +95,7 @@ class RideForegroundTask {
     required String userId,
     required String accessToken,
     String? refreshToken,
+    required bool sharing,
   }) async {
     if (!_isAndroid) return;
     init();
@@ -97,6 +105,7 @@ class RideForegroundTask {
       userId: userId,
       accessToken: accessToken,
       refreshToken: refreshToken,
+      mode: sharing ? modeShare : modeWait,
     );
 
     if (await FlutterForegroundTask.isRunningService) {
@@ -106,22 +115,40 @@ class RideForegroundTask {
         userId: userId,
         accessToken: accessToken,
         refreshToken: refreshToken,
+        mode: sharing ? modeShare : modeWait,
       );
+      if (sharing) await _showSharingNotice();
       return;
     }
 
     await FlutterForegroundTask.startService(
       serviceId: 2601,
       serviceTypes: const [ForegroundServiceTypes.location],
-      notificationTitle: 'Rental in progress',
-      notificationText:
-          'Sharing bike location. Stays on if you leave QRide or lock the phone.',
+      notificationTitle: sharing ? 'Rental in progress' : 'Rental requested',
+      notificationText: sharing ? _sharingNotice : _waitingNotice,
       callback: rideForegroundStartCallback,
     );
   }
 
+  static const _waitingNotice =
+      'Waiting for staff. Location starts when they approve, even if QRide is closed.';
+  static const _sharingNotice =
+      'Sharing bike location. Stays on if you leave QRide, lock the phone, or close the app.';
+
+  static Future<void> _showSharingNotice() async {
+    try {
+      await FlutterForegroundTask.updateService(
+        notificationTitle: 'Rental in progress',
+        notificationText: _sharingNotice,
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideFgTask] notice update failed: $e');
+    }
+  }
+
   /// Keeps a running service on the current rental + fresh auth without a
-  /// full restart when nothing changed.
+  /// full restart when nothing changed. Starts GPS sharing.
   static Future<void> ensureRunning({
     required String rentalId,
     required String userId,
@@ -135,19 +162,50 @@ class RideForegroundTask {
       userId: userId,
       accessToken: accessToken,
       refreshToken: refreshToken,
+      mode: modeShare,
     );
     pushContext(
       rentalId: rentalId,
       userId: userId,
       accessToken: accessToken,
       refreshToken: refreshToken,
+      mode: modeShare,
     );
-    if (await FlutterForegroundTask.isRunningService) return;
+    if (await FlutterForegroundTask.isRunningService) {
+      await _showSharingNotice();
+      return;
+    }
     await start(
       rentalId: rentalId,
       userId: userId,
       accessToken: accessToken,
       refreshToken: refreshToken,
+      sharing: true,
+    );
+  }
+
+  /// Starts the rental notice while the request is still pending.
+  ///
+  /// The service is started from the open app, then stays up if the rider
+  /// leaves or closes QRide. It does not read GPS until the rental is active,
+  /// so approval can begin sharing without the rider opening the app again.
+  static Future<void> ensureWaiting({
+    required String rentalId,
+    required String userId,
+    required String accessToken,
+    String? refreshToken,
+  }) async {
+    if (!_isAndroid) return;
+    init();
+    final running = await FlutterForegroundTask.isRunningService;
+    final mode = await FlutterForegroundTask.getData<String>(key: _kMode);
+    if (running && mode == modeShare) return;
+    await start(
+      rentalId: rentalId,
+      userId: userId,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      sharing: false,
     );
   }
 
@@ -162,6 +220,7 @@ class RideForegroundTask {
     await FlutterForegroundTask.removeData(key: _kUserId);
     await FlutterForegroundTask.removeData(key: _kAccessToken);
     await FlutterForegroundTask.removeData(key: _kRefreshToken);
+    await FlutterForegroundTask.removeData(key: _kMode);
   }
 
   static Future<bool> get isRunning async {
@@ -174,6 +233,7 @@ class RideForegroundTask {
     required String userId,
     required String accessToken,
     String? refreshToken,
+    String? mode,
   }) {
     if (!_isAndroid) return;
     FlutterForegroundTask.sendDataToTask({
@@ -181,6 +241,7 @@ class RideForegroundTask {
       'user_id': userId,
       'access_token': accessToken,
       'refresh_token': ?refreshToken,
+      'mode': ?mode,
     });
   }
 
@@ -198,10 +259,12 @@ class RideForegroundTask {
     required String userId,
     required String accessToken,
     String? refreshToken,
+    required String mode,
   }) async {
     await FlutterForegroundTask.saveData(key: _kRentalId, value: rentalId);
     await FlutterForegroundTask.saveData(key: _kUserId, value: userId);
     await FlutterForegroundTask.saveData(key: _kAccessToken, value: accessToken);
+    await FlutterForegroundTask.saveData(key: _kMode, value: mode);
     if (refreshToken != null && refreshToken.isNotEmpty) {
       await FlutterForegroundTask.saveData(
         key: _kRefreshToken,
@@ -216,8 +279,12 @@ class RideLocationTaskHandler extends TaskHandler {
   String? _refreshToken;
   String? _rentalId;
   String? _userId;
+  bool _sharing = false;
   bool _busy = false;
   bool _shareQueued = false;
+  bool _watchBusy = false;
+  bool _promoting = false;
+  DateTime? _lastWatchAt;
   bool _useFusedFallback = false;
   int _listenGen = 0;
   Position? _lastPos;
@@ -236,6 +303,10 @@ class RideLocationTaskHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     await _loadPersisted();
+    if (!_sharing) {
+      await _watchApproval();
+      return;
+    }
     _startCompass();
     await _listenGps();
     await _shareLatest();
@@ -243,6 +314,10 @@ class RideLocationTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {
+    if (!_sharing) {
+      unawaited(_watchApproval());
+      return;
+    }
     unawaited(_shareLatest());
     unawaited(_ensureGpsAlive());
   }
@@ -268,6 +343,10 @@ class RideLocationTaskHandler extends TaskHandler {
     if (userId != null && userId.isNotEmpty) _userId = userId;
     if (access != null && access.isNotEmpty) _accessToken = access;
     if (refresh != null && refresh.isNotEmpty) _refreshToken = refresh;
+    final mode = map['mode']?.toString();
+    if (mode == RideForegroundTask.modeShare) {
+      unawaited(_promoteToSharing());
+    }
     final rawHeading = map['heading'];
     if (rawHeading is num) {
       final h = rawHeading.toDouble();
@@ -291,6 +370,109 @@ class RideLocationTaskHandler extends TaskHandler {
     _refreshToken = await FlutterForegroundTask.getData<String>(
       key: RideForegroundTask._kRefreshToken,
     );
+    final mode = await FlutterForegroundTask.getData<String>(
+      key: RideForegroundTask._kMode,
+    );
+    // Older sessions have no mode. Those were started only for an active ride.
+    _sharing = mode != RideForegroundTask.modeWait;
+  }
+
+  /// Polls the rental while the rider is away. GPS stays off until approval.
+  Future<void> _watchApproval() async {
+    if (_sharing || _watchBusy) return;
+    final now = DateTime.now();
+    final last = _lastWatchAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 4)) {
+      return;
+    }
+    _lastWatchAt = now;
+    _watchBusy = true;
+    try {
+      if (_rentalId == null || _accessToken == null) await _loadPersisted();
+      final rentalId = _rentalId;
+      var token = _accessToken;
+      if (rentalId == null || token == null || token.isEmpty) return;
+
+      var status = await _fetchRentalStatus(rentalId, token);
+      if (status == 'unauthorized') {
+        final refreshed = await _tryRefreshToken();
+        if (refreshed != null) {
+          _accessToken = refreshed;
+          token = refreshed;
+          await FlutterForegroundTask.saveData(
+            key: RideForegroundTask._kAccessToken,
+            value: refreshed,
+          );
+          status = await _fetchRentalStatus(rentalId, token);
+        }
+      }
+
+      if (status == 'active') {
+        await _promoteToSharing();
+        return;
+      }
+      if (status == 'ended' || status == 'rejected' || status == 'gone') {
+        // ignore: avoid_print
+        print('[RideFgTask] stopping — request is no longer open');
+        await FlutterForegroundTask.stopService();
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideFgTask] approval watch failed: $e');
+    } finally {
+      _watchBusy = false;
+    }
+  }
+
+  Future<void> _promoteToSharing() async {
+    if (_promoting || (_sharing && _gpsSub != null)) return;
+    _promoting = true;
+    try {
+      _sharing = true;
+      await FlutterForegroundTask.saveData(
+        key: RideForegroundTask._kMode,
+        value: RideForegroundTask.modeShare,
+      );
+      await RideForegroundTask._showSharingNotice();
+      if (_gpsSub != null) return;
+      _startCompass();
+      await _listenGps();
+      await _shareLatest();
+    } finally {
+      _promoting = false;
+    }
+  }
+
+  /// `unauthorized`, `gone`, a rental status, or null when the network failed.
+  Future<String?> _fetchRentalStatus(String rentalId, String token) async {
+    final base = SupabaseConfig.effectiveUrl;
+    final anon = SupabaseConfig.effectiveAnonKey;
+    final uri = Uri.parse(
+      '$base/rest/v1/rentals?id=eq.$rentalId&select=status',
+    );
+    final response = await http
+        .get(
+          uri,
+          headers: {
+            'apikey': anon,
+            'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      return 'unauthorized';
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List || decoded.isEmpty) return 'gone';
+    final row = decoded.first;
+    if (row is! Map) return 'gone';
+    final status = row['status']?.toString();
+    if (status == null || status.isEmpty) return 'gone';
+    return status;
   }
 
   void _startCompass() {
@@ -403,6 +585,7 @@ class RideLocationTaskHandler extends TaskHandler {
       _shareQueued = true;
       return;
     }
+    if (!_sharing) return;
     if (_rentalId == null || _userId == null) await _loadPersisted();
 
     final rentalId = _rentalId;

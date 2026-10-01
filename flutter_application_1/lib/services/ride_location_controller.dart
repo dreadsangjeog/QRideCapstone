@@ -12,9 +12,12 @@ import 'supabase_client.dart';
 
 /// Keeps rental GPS → admin uploads alive for the whole ride.
 ///
-/// Android uses one writer: [RideForegroundTask]. Its isolate keeps a GPS
-/// listener registered and uploads while QRide is open, in another app, or
-/// with the screen locked in a pocket. The UI [LocationTrackingService] only
+/// Android uses one writer: [RideForegroundTask]. The service starts when the
+/// rider requests a bike, while the app is open, and then stays up if they
+/// leave or close QRide. It does not read GPS until staff approve. After
+/// approval its isolate keeps a GPS listener registered and uploads while
+/// QRide is open, in another app, closed from the recent-apps list, or with
+/// the screen locked in a pocket. The UI [LocationTrackingService] only
 /// mirrors those fixes.
 ///
 /// A second Geolocator stream beside that task stalled uploads (admin pin
@@ -36,6 +39,7 @@ class RideLocationController with WidgetsBindingObserver {
   StreamSubscription<AuthState>? _authSub;
   Timer? _poll;
   String? _rentalId;
+  String? _watchId;
   bool _started = false;
   bool _syncing = false;
   bool _syncQueued = false;
@@ -144,6 +148,15 @@ class RideLocationController with WidgetsBindingObserver {
   Future<void> _syncOnce() async {
     try {
       final rental = await _repo.fetchMyActiveRental();
+      if (rental != null && rental.isPending && _usesForegroundWriter) {
+        if (tracking.isTracking || tracking.isMirroring) {
+          await tracking.stopTracking();
+        }
+        _rentalId = null;
+        final waiting = await _ensureWaitingWriter(rental.id);
+        if (waiting) _watchId = rental.id;
+        return;
+      }
       if (rental != null && rental.isActive) {
         // The map already has a point. Write it now so staff see the pin
         // without waiting for the rental GPS listener's first satellite fix.
@@ -163,6 +176,7 @@ class RideLocationController with WidgetsBindingObserver {
             final running = await _ensureForegroundWriter(rental.id);
             if (running) {
               _rentalId = rental.id;
+              _watchId = rental.id;
               return;
             }
           } catch (e) {
@@ -182,6 +196,7 @@ class RideLocationController with WidgetsBindingObserver {
           return;
         }
         _rentalId = rental.id;
+        _watchId = rental.id;
         await tracking.startTracking(
           rentalId: rental.id,
           minInterval: _shareEvery,
@@ -195,7 +210,7 @@ class RideLocationController with WidgetsBindingObserver {
       return;
     }
 
-    if (_rentalId == null) return;
+    if (_rentalId == null && _watchId == null) return;
     await _clearAll();
   }
 
@@ -212,22 +227,46 @@ class RideLocationController with WidgetsBindingObserver {
         accessToken: session.accessToken,
         refreshToken: session.refreshToken,
       );
-      return RideForegroundTask.isRunning;
+      return await RideForegroundTask.isRunning;
     } catch (e) {
       // ignore: avoid_print
       print('[RideLocation] foreground writer failed: $e');
-      return RideForegroundTask.isRunning;
+      return await RideForegroundTask.isRunning;
+    }
+  }
+
+  Future<bool> _ensureWaitingWriter(String rentalId) async {
+    final user = SupabaseClientProvider.client.auth.currentUser;
+    final session = SupabaseClientProvider.client.auth.currentSession;
+    if (user == null || session == null) return false;
+    try {
+      await RideForegroundTask.ensureWaiting(
+        rentalId: rentalId,
+        userId: user.id,
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+      );
+      return await RideForegroundTask.isRunning;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideLocation] waiting writer failed: $e');
+      return await RideForegroundTask.isRunning;
     }
   }
 
   Future<void> _pushAuthToForeground() async {
-    final rentalId = _rentalId;
+    final rentalId = _rentalId ?? _watchId;
     if (!_usesForegroundWriter || rentalId == null) return;
-    await _ensureForegroundWriter(rentalId);
+    if (_rentalId != null) {
+      await _ensureForegroundWriter(rentalId);
+      return;
+    }
+    await _ensureWaitingWriter(rentalId);
   }
 
   Future<void> _clearAll() async {
     _rentalId = null;
+    _watchId = null;
     await tracking.stopTracking();
     if (_usesForegroundWriter) await RideForegroundTask.stop();
   }
@@ -264,7 +303,18 @@ class RideLocationController with WidgetsBindingObserver {
     await _channel?.unsubscribe();
     _channel = null;
     _started = false;
-    await _clearAll();
+    final signedIn =
+        SupabaseClientProvider.client.auth.currentUser != null;
+    var keepService = false;
+    if (_usesForegroundWriter && signedIn) {
+      keepService = _rentalId != null ||
+          _watchId != null ||
+          await RideForegroundTask.isRunning;
+    }
+    // Swiping QRide away disposes this widget. Leave the rental service
+    // running so a pending request can notice approval, and an active ride
+    // keeps sharing, without the rider opening the app again.
+    if (!keepService) await _clearAll();
     tracking.dispose();
   }
 }

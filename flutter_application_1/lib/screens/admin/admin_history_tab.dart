@@ -426,7 +426,16 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
                           color: cs.onSurface,
                         ),
                       ),
-                      if (row.riderUsername != null) ...[
+                      if (row.accountDeleted &&
+                          row.riderDisplay != 'Deleted account') ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'Deleted account',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ] else if (row.riderUsername != null) ...[
                         const SizedBox(height: 2),
                         Text(
                           row.riderUsername!,
@@ -811,7 +820,15 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            if (widget.row.riderUsername != null)
+            if (widget.row.accountDeleted &&
+                widget.row.riderDisplay != 'Deleted account')
+              Text(
+                'Deleted account',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+              )
+            else if (widget.row.riderUsername != null)
               Text(
                 widget.row.riderUsername!,
                 style: theme.textTheme.bodySmall?.copyWith(

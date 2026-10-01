@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../screens/notifications_screen.dart';
+import '../theme/brand.dart';
 import 'login_scene_backdrop.dart';
 import 'qride_brand.dart';
 import 'qride_glass.dart';
@@ -58,11 +59,18 @@ class GlassCircleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // The rider map stays a light basemap in dark mode, so a glassy light
+    // icon disappears on it. Use a solid dark plate and a white icon instead.
+    final following = foreground == QrideBrand.accent;
     final bg = isDark
-        ? Colors.white.withValues(alpha: 0.10)
-        : Colors.white.withValues(alpha: 0.48);
-    final fg = isDark ? const Color(0xFFE8EEF6) : foreground;
-    final rim = Colors.white.withValues(alpha: isDark ? 0.18 : 0.78);
+        ? const Color(0xFF1B2433)
+        : Colors.white.withValues(alpha: 0.92);
+    final fg = isDark
+        ? (following ? const Color(0xFF8EBCFF) : Colors.white)
+        : foreground;
+    final rim = isDark
+        ? Colors.white.withValues(alpha: 0.72)
+        : Colors.white.withValues(alpha: 0.78);
     return DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,

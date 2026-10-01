@@ -14,6 +14,7 @@ class Rental {
     this.estimatedCost,
     this.actualCost,
     this.penaltyFee,
+    this.riderName,
   });
 
   final String id;
@@ -29,6 +30,9 @@ class Rental {
   final double? estimatedCost;
   final double? actualCost;
   final double? penaltyFee;
+
+  /// Name copied onto the ride when the rider deletes their account.
+  final String? riderName;
 
   bool get isPending  => status == 'pending';
   bool get isActive   => status == 'active';
@@ -76,6 +80,7 @@ class Rental {
       estimatedCost: (json['estimated_cost'] as num?)?.toDouble(),
       actualCost:    (json['actual_cost'] as num?)?.toDouble(),
       penaltyFee:    (json['penalty_fee'] as num?)?.toDouble(),
+      riderName:     json['rider_name']?.toString(),
     );
   }
 }

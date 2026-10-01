@@ -148,15 +148,35 @@ class AnalyticsRepository {
     final fromIso = start.toUtc().toIso8601String();
     final rateFuture = _currentHourlyRate();
 
-    final raw = await SupabaseClientProvider.client
-        .from('rentals')
-        .select(
-          'id, bike_id, user_id, status, started_at, ended_at, approved_at, '
-          'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
-          'bikes(code, label), profiles(username, first_name, middle_name, last_name)',
-        )
-        .or('ended_at.gte."$fromIso",status.eq.pending,status.eq.active')
-        .order('ended_at', nullsFirst: false);
+    const columns =
+        'id, bike_id, user_id, status, started_at, ended_at, approved_at, '
+        'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
+        'rider_name, bikes(code, label), profiles!left(username, first_name, middle_name, last_name)';
+    const legacyColumns =
+        'id, bike_id, user_id, status, started_at, ended_at, approved_at, '
+        'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
+        'bikes(code, label), profiles(username, first_name, middle_name, last_name)';
+
+    Future<dynamic> load(String select) {
+      return SupabaseClientProvider.client
+          .from('rentals')
+          .select(select)
+          .or('ended_at.gte."$fromIso",status.eq.pending,status.eq.active')
+          .order('ended_at', nullsFirst: false);
+    }
+
+    dynamic raw;
+    try {
+      raw = await load(columns);
+    } catch (e) {
+      final message = e.toString();
+      final stale = message.contains('rider_name') ||
+          message.contains('42703') ||
+          message.contains('PGRST200') ||
+          message.contains('!left');
+      if (!stale) rethrow;
+      raw = await load(legacyColumns);
+    }
 
     final dailyDays = <DateTime>[
       for (var i = 0; i < days; i++) start.add(Duration(days: i)),

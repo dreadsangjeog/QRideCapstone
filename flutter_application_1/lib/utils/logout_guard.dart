@@ -32,7 +32,7 @@ Future<void> confirmAndSignOut(BuildContext context) async {
       title: Text(hasOpenRental ? 'Active rental — log out?' : 'Log out?'),
       content: Text(
         hasOpenRental
-            ? 'You still have a $bikeHint. Logging out now notifies staff, and they can review your ID and last location. Leaving the app or locking the phone does not log you out, and location sharing continues. Return the bike and wait until staff end the ride if you can.'
+            ? 'You still have a $bikeHint. Logging out now notifies staff, and they can review your ID and last location. Leaving the app, locking the phone, or closing it from recent apps does not log you out. Location sharing is meant to continue. Return the bike and wait until staff end the ride if you can.'
             : 'You will be returned to the login screen.',
       ),
       actions: [

@@ -32,9 +32,13 @@ class RentalWithBike {
   }
 
   /// Legal name when KYC has it, otherwise the login username.
-  /// A removed account is labeled so the ride still shows in history.
+  /// A removed account keeps the name that was saved on the ride.
   String get riderDisplay {
-    if (accountDeleted) return 'Deleted account';
+    if (accountDeleted) {
+      final saved = rental.riderName?.trim();
+      if (saved != null && saved.isNotEmpty) return saved;
+      return 'Deleted account';
+    }
     final name = legalName;
     if (name.isNotEmpty) return name;
     if (username?.trim().isNotEmpty == true) return username!.trim();

@@ -9,6 +9,25 @@ import '../models/rental_location.dart';
 import '../models/rental_with_bike.dart';
 import 'supabase_client.dart';
 
+const _rentalJoin =
+    '*, bikes(*), rider_name, profiles!left(username, first_name, middle_name, last_name)';
+const _rentalJoinLegacy =
+    '*, bikes(*), profiles(username, first_name, middle_name, last_name)';
+
+bool _staleRentalJoin(Object error) {
+  final s = error.toString();
+  return s.contains('rider_name') ||
+      s.contains('42703') ||
+      s.contains('PGRST200') ||
+      s.contains('!left');
+}
+
+List<RentalWithBike> _rentalsFromRows(dynamic rows) {
+  return (rows as List<dynamic>)
+      .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
+      .toList();
+}
+
 class AdminRepository {
   Future<List<Bike>> fetchBikes() async {
     List<Bike> parse(dynamic rows) {
@@ -253,16 +272,20 @@ class AdminRepository {
 
   /// Active rentals with joined bike row (code/label for admin UI).
   Future<List<RentalWithBike>> fetchActiveRentalsWithBikes() async {
-    final rows = await SupabaseClientProvider.client
-        .from('rentals')
-        .select(
-          '*, bikes(*), profiles(username, first_name, middle_name, last_name)',
-        )
-        .eq('status', 'active')
-        .order('approved_at', ascending: false);
-    return (rows as List<dynamic>)
-        .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
-        .toList();
+    Future<dynamic> load(String columns) {
+      return SupabaseClientProvider.client
+          .from('rentals')
+          .select(columns)
+          .eq('status', 'active')
+          .order('approved_at', ascending: false);
+    }
+
+    try {
+      return _rentalsFromRows(await load(_rentalJoin));
+    } catch (e) {
+      if (!_staleRentalJoin(e)) rethrow;
+      return _rentalsFromRows(await load(_rentalJoinLegacy));
+    }
   }
 
   /// Full rental log for admin (newest first). Optional [status] filters to one status.
@@ -270,32 +293,38 @@ class AdminRepository {
     int limit = 500,
     String? status,
   }) async {
-    var q = SupabaseClientProvider.client
-        .from('rentals')
-        .select(
-          '*, bikes(*), profiles(username, first_name, middle_name, last_name)',
-        );
-    if (status != null && status.isNotEmpty) {
-      q = q.eq('status', status);
+    Future<dynamic> load(String columns) {
+      var q = SupabaseClientProvider.client.from('rentals').select(columns);
+      if (status != null && status.isNotEmpty) {
+        q = q.eq('status', status);
+      }
+      return q.order('started_at', ascending: false).limit(limit);
     }
-    final rows = await q.order('started_at', ascending: false).limit(limit);
-    return (rows as List<dynamic>)
-        .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
-        .toList();
+
+    try {
+      return _rentalsFromRows(await load(_rentalJoin));
+    } catch (e) {
+      if (!_staleRentalJoin(e)) rethrow;
+      return _rentalsFromRows(await load(_rentalJoinLegacy));
+    }
   }
 
   /// Pending rental requests waiting for admin approval.
   Future<List<RentalWithBike>> fetchPendingRentals() async {
-    final rows = await SupabaseClientProvider.client
-        .from('rentals')
-        .select(
-          '*, bikes(*), profiles(username, first_name, middle_name, last_name)',
-        )
-        .eq('status', 'pending')
-        .order('started_at', ascending: true);
-    return (rows as List<dynamic>)
-        .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
-        .toList();
+    Future<dynamic> load(String columns) {
+      return SupabaseClientProvider.client
+          .from('rentals')
+          .select(columns)
+          .eq('status', 'pending')
+          .order('started_at', ascending: true);
+    }
+
+    try {
+      return _rentalsFromRows(await load(_rentalJoin));
+    } catch (e) {
+      if (!_staleRentalJoin(e)) rethrow;
+      return _rentalsFromRows(await load(_rentalJoinLegacy));
+    }
   }
 
   /// How many rentals are currently pending acceptance.

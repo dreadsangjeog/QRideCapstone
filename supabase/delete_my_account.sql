@@ -1,27 +1,37 @@
--- Rider self-service account deletion.
--- Settled rides stay for staff reports. The account name is cleared.
--- Prefer supabase/migrations/038_keep_rentals_on_account_delete.sql if
--- delete_kyc_files_for_user already exists.
--- Hard block: pending or active rental (bike not returned) cannot be deleted.
+-- Same script as supabase/migrations/039_keep_rider_history_on_delete.sql.
+-- Paste this whole file into the Supabase SQL editor.
+
+-- Settled rentals and their charges stay after the rider deletes their
+-- account. Every foreign key on rentals.user_id is dropped first so deleting
+-- the profile or the login cannot cascade-delete history or sales.
+-- The rider's name is copied onto the rental before the profile is removed.
+
+alter table public.rentals
+  add column if not exists rider_name text;
 
 alter table public.rentals
   alter column user_id drop not null;
 
 do $$
 declare
-  c name;
+  r record;
 begin
-  select con.conname into c
-  from pg_constraint con
-  join pg_class rel on rel.oid = con.conrelid
-  join pg_namespace nsp on nsp.oid = rel.relnamespace
-  where nsp.nspname = 'public'
-    and rel.relname = 'rentals'
-    and con.contype = 'f'
-    and pg_get_constraintdef(con.oid) ilike '%auth.users%';
-  if c is not null then
-    execute format('alter table public.rentals drop constraint %I', c);
-  end if;
+  for r in
+    select con.conname
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    join lateral unnest(con.conkey) as cols(attnum) on true
+    join pg_attribute att
+      on att.attrelid = rel.oid
+     and att.attnum = cols.attnum
+    where nsp.nspname = 'public'
+      and rel.relname = 'rentals'
+      and con.contype = 'f'
+      and att.attname = 'user_id'
+  loop
+    execute format('alter table public.rentals drop constraint %I', r.conname);
+  end loop;
 end $$;
 
 alter table public.rentals
@@ -46,7 +56,6 @@ begin
     raise exception 'not_signed_in';
   end if;
 
-  -- Serialize delete vs a new rental request from the same rider.
   perform pg_advisory_xact_lock(hashtext('qride_acct'), hashtext(v_uid::text));
 
   select p.role into v_role
@@ -57,7 +66,6 @@ begin
     raise exception 'admin_cannot_self_delete';
   end if;
 
-  -- Lock this rider's rental rows so status cannot change mid-delete.
   perform 1
   from public.rentals r
   where r.user_id = v_uid
@@ -76,15 +84,30 @@ begin
   from auth.users u
   where u.id = v_uid;
 
-  perform set_config('storage.allow_delete_query', 'true', true);
-  delete from storage.objects
-  where bucket_id = 'kyc-documents'
-    and split_part(name, '/', 1) = v_uid::text;
+  update public.rentals r
+  set rider_name = coalesce(
+    nullif(
+      trim(concat_ws(
+        ' ',
+        nullif(trim(p.first_name), ''),
+        nullif(trim(p.middle_name), ''),
+        nullif(trim(p.last_name), '')
+      )),
+      ''
+    ),
+    nullif(trim(p.username), ''),
+    'Deleted account'
+  )
+  from public.profiles p
+  where r.user_id = v_uid
+    and p.id = v_uid
+    and (r.rider_name is null or btrim(r.rider_name) = '');
+
+  perform public.delete_kyc_files_for_user(v_uid);
 
   delete from public.notifications
   where user_id = v_uid;
 
-  -- Drop the rider's GPS trail. Settled rental rows stay for reports.
   delete from public.rental_locations
   where user_id = v_uid;
 
@@ -108,7 +131,6 @@ begin
   delete from public.profiles
   where id = v_uid;
 
-  -- Settled rentals remain. user_id is cleared by ON DELETE SET NULL.
   delete from auth.users
   where id = v_uid;
 end;
