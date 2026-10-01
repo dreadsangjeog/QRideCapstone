@@ -151,11 +151,11 @@ class AnalyticsRepository {
     const columns =
         'id, bike_id, user_id, status, started_at, ended_at, approved_at, '
         'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
-        'rider_name, bikes(code, label), profiles!left(username, first_name, middle_name, last_name)';
+        'rider_name, bikes(code, label)';
     const legacyColumns =
         'id, bike_id, user_id, status, started_at, ended_at, approved_at, '
         'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
-        'bikes(code, label), profiles(username, first_name, middle_name, last_name)';
+        'bikes(code, label)';
 
     Future<dynamic> load(String select) {
       return SupabaseClientProvider.client
@@ -170,12 +170,31 @@ class AnalyticsRepository {
       raw = await load(columns);
     } catch (e) {
       final message = e.toString();
-      final stale = message.contains('rider_name') ||
-          message.contains('42703') ||
-          message.contains('PGRST200') ||
-          message.contains('!left');
+      final stale =
+          message.contains('rider_name') || message.contains('42703');
       if (!stale) rethrow;
       raw = await load(legacyColumns);
+    }
+
+    final items = raw as List<dynamic>;
+    final profileIds = <String>{};
+    for (final item in items) {
+      if (item is! Map) continue;
+      final id = item['user_id']?.toString().trim();
+      if (id != null && id.isNotEmpty) profileIds.add(id);
+    }
+    final profilesById = <String, Map<String, dynamic>>{};
+    if (profileIds.isNotEmpty) {
+      final profiles = await SupabaseClientProvider.client
+          .from('profiles')
+          .select('id, username, first_name, middle_name, last_name')
+          .inFilter('id', profileIds.toList());
+      for (final item in profiles as List<dynamic>) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final id = map['id']?.toString();
+        if (id != null && id.isNotEmpty) profilesById[id] = map;
+      }
     }
 
     final dailyDays = <DateTime>[
@@ -197,9 +216,12 @@ class AnalyticsRepository {
     var collected = 0.0;
     var penalties = 0.0;
 
-    for (final item in raw as List<dynamic>) {
-      if (item is! Map<String, dynamic>) continue;
-      final row = RentalWithBike.fromJoinedJson(item);
+    for (final item in items) {
+      if (item is! Map) continue;
+      final json = Map<String, dynamic>.from(item);
+      final profile = profilesById[json['user_id']?.toString()];
+      if (profile != null) json['profiles'] = profile;
+      final row = RentalWithBike.fromJoinedJson(json);
       final r = row.rental;
       if (!seen.add(r.id)) continue;
 

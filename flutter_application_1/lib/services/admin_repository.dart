@@ -9,23 +9,47 @@ import '../models/rental_location.dart';
 import '../models/rental_with_bike.dart';
 import 'supabase_client.dart';
 
-const _rentalJoin =
-    '*, bikes(*), rider_name, profiles!left(username, first_name, middle_name, last_name)';
-const _rentalJoinLegacy =
-    '*, bikes(*), profiles(username, first_name, middle_name, last_name)';
+const _rentalColumns = '*, bikes(*), rider_name';
+const _rentalColumnsLegacy = '*, bikes(*)';
 
-bool _staleRentalJoin(Object error) {
+bool _missingRiderName(Object error) {
   final s = error.toString();
-  return s.contains('rider_name') ||
-      s.contains('42703') ||
-      s.contains('PGRST200') ||
-      s.contains('!left');
+  return s.contains('rider_name') || s.contains('42703');
 }
 
-List<RentalWithBike> _rentalsFromRows(dynamic rows) {
-  return (rows as List<dynamic>)
-      .map((e) => RentalWithBike.fromJoinedJson(e as Map<String, dynamic>))
-      .toList();
+/// Rider names are loaded on their own. Rentals are not linked to profiles by
+/// a foreign key, so embedding `profiles(...)` makes PostgREST reject the query.
+Future<List<RentalWithBike>> _rentalsWithProfiles(dynamic rows) async {
+  final list = <Map<String, dynamic>>[];
+  for (final item in rows as List<dynamic>) {
+    if (item is Map) list.add(Map<String, dynamic>.from(item));
+  }
+  final ids = <String>{};
+  for (final row in list) {
+    final id = row['user_id']?.toString().trim();
+    if (id != null && id.isNotEmpty) ids.add(id);
+  }
+  final byId = <String, Map<String, dynamic>>{};
+  if (ids.isNotEmpty) {
+    final profiles = await SupabaseClientProvider.client
+        .from('profiles')
+        .select('id, username, first_name, middle_name, last_name')
+        .inFilter('id', ids.toList());
+    for (final item in profiles as List<dynamic>) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final id = map['id']?.toString();
+      if (id != null && id.isNotEmpty) byId[id] = map;
+    }
+  }
+  return [
+    for (final row in list)
+      RentalWithBike.fromJoinedJson({
+        ...row,
+        if (byId[row['user_id']?.toString()] != null)
+          'profiles': byId[row['user_id']?.toString()],
+      }),
+  ];
 }
 
 class AdminRepository {
@@ -281,10 +305,10 @@ class AdminRepository {
     }
 
     try {
-      return _rentalsFromRows(await load(_rentalJoin));
+      return await _rentalsWithProfiles(await load(_rentalColumns));
     } catch (e) {
-      if (!_staleRentalJoin(e)) rethrow;
-      return _rentalsFromRows(await load(_rentalJoinLegacy));
+      if (!_missingRiderName(e)) rethrow;
+      return await _rentalsWithProfiles(await load(_rentalColumnsLegacy));
     }
   }
 
@@ -302,10 +326,10 @@ class AdminRepository {
     }
 
     try {
-      return _rentalsFromRows(await load(_rentalJoin));
+      return await _rentalsWithProfiles(await load(_rentalColumns));
     } catch (e) {
-      if (!_staleRentalJoin(e)) rethrow;
-      return _rentalsFromRows(await load(_rentalJoinLegacy));
+      if (!_missingRiderName(e)) rethrow;
+      return await _rentalsWithProfiles(await load(_rentalColumnsLegacy));
     }
   }
 
@@ -320,10 +344,10 @@ class AdminRepository {
     }
 
     try {
-      return _rentalsFromRows(await load(_rentalJoin));
+      return await _rentalsWithProfiles(await load(_rentalColumns));
     } catch (e) {
-      if (!_staleRentalJoin(e)) rethrow;
-      return _rentalsFromRows(await load(_rentalJoinLegacy));
+      if (!_missingRiderName(e)) rethrow;
+      return await _rentalsWithProfiles(await load(_rentalColumnsLegacy));
     }
   }
 
@@ -415,12 +439,29 @@ class AdminRepository {
     // Step 1: get IDs of all active rentals plus their bike + rider info.
     final activeRentals = await SupabaseClientProvider.client
         .from('rentals')
-        .select(
-          'id, bikes(code, label), profiles(username, first_name, middle_name, last_name)',
-        )
+        .select('id, user_id, bikes(code, label)')
         .eq('status', 'active');
 
     if ((activeRentals as List).isEmpty) return [];
+
+    final userIds = <String>{
+      for (final r in activeRentals)
+        if (r['user_id'] != null && r['user_id'].toString().trim().isNotEmpty)
+          r['user_id'].toString(),
+    };
+    final profilesById = <String, Map<String, dynamic>>{};
+    if (userIds.isNotEmpty) {
+      final profiles = await SupabaseClientProvider.client
+          .from('profiles')
+          .select('id, username, first_name, middle_name, last_name')
+          .inFilter('id', userIds.toList());
+      for (final item in profiles as List<dynamic>) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final id = map['id']?.toString();
+        if (id != null && id.isNotEmpty) profilesById[id] = map;
+      }
+    }
 
     final rentalIds = activeRentals
         .map((r) => r['id'].toString())
@@ -439,7 +480,7 @@ class AdminRepository {
           'rentals': {
             'status': 'active',
             'bikes': r['bikes'],
-            'profiles': r['profiles'],
+            'profiles': profilesById[r['user_id']?.toString()],
           },
         },
     };

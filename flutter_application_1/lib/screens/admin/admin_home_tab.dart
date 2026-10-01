@@ -53,32 +53,34 @@ class AdminHomeTabState extends State<AdminHomeTab> {
   Future<void> refresh() => _load();
 
   Future<void> _load() async {
+    List<Bike> bikes = _bikes;
+    var activeCount = _active;
+    var pending = _pending;
+    var rides = _rides;
+    var week = _week;
     try {
-      final bikesF = widget.repo.fetchBikes();
-      final pendingF = widget.repo.fetchPendingRentals();
-      final activeF = widget.repo.fetchActiveRentalsWithBikes();
-      final weekF = _analytics.loadReport(7);
-      final bikes = await bikesF;
-      final pending = await pendingF;
-      final active = await activeF;
-      ReportSnapshot? week;
-      try {
-        week = await weekF;
-      } catch (_) {
-        week = null;
-      }
-      if (!mounted) return;
-      setState(() {
-        _bikes = [...bikes]..sort((a, b) => a.code.compareTo(b.code));
-        _active = active.length;
-        _week = week;
-        _pending = pending.take(5).toList();
-        _rides = active.take(5).toList();
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
+      bikes = await widget.repo.fetchBikes();
+    } catch (_) {}
+    try {
+      pending = await widget.repo.fetchPendingRentals();
+    } catch (_) {}
+    try {
+      final active = await widget.repo.fetchActiveRentalsWithBikes();
+      activeCount = active.length;
+      rides = active.take(5).toList();
+    } catch (_) {}
+    try {
+      week = await _analytics.loadReport(7);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _bikes = [...bikes]..sort((a, b) => a.code.compareTo(b.code));
+      _active = activeCount;
+      _week = week;
+      _pending = pending.take(5).toList();
+      _rides = rides;
+      _loading = false;
+    });
   }
 
   @override
