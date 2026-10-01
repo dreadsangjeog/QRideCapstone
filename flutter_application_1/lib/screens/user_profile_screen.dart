@@ -37,6 +37,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   final _birthdate = TextEditingController();
   KycProfile? _profile;
   bool _savingName = false;
+  int? _profileTabSeen;
 
   @override
   void initState() {
@@ -46,6 +47,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
       _refreshAdminRole();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final index = RiderNavScope.maybeOf(context)?.currentIndex;
+    if (index == 3 && _profileTabSeen != 3) {
+      _profileTabSeen = index;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_loadProfile());
+      });
+    } else {
+      _profileTabSeen = index;
+    }
   }
 
   Future<void> _refreshAdminRole() async {
@@ -138,6 +153,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           final user = client.auth.currentUser;
           final name = _displayName(user);
           final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+          final live = KycScope.maybeOf(context)?.profile ?? _profile;
+          final detailsLocked = live == null || live.personalDetailsLocked;
+          final showContinue = live != null && live.needsAction;
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -249,14 +267,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 middleName: _middleName,
                 lastName: _lastName,
                 birthdate: _birthdate,
-                locked: _profile?.personalDetailsLocked == true,
+                locked: detailsLocked,
+                lockedNote: live == null
+                    ? 'Loading your details.'
+                    : live.isVerified
+                        ? 'Saved from your ID check. These details cannot be changed.'
+                        : 'Submitted with your ID. These details stay as staff review them.',
                 saving: _savingName,
                 onSave: _saveName,
               ),
-              if (_profile != null && _profile!.isPending) ...[
+              if (live != null && live.isPending) ...[
                 const SizedBox(height: 12),
                 const _WaitingReviewNotice(),
-              ] else if (_profile != null && !_profile!.isVerified) ...[
+              ] else if (showContinue) ...[
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: () async {
@@ -503,6 +526,7 @@ class _LegalNameCard extends StatelessWidget {
     required this.lastName,
     required this.birthdate,
     required this.locked,
+    required this.lockedNote,
     required this.saving,
     required this.onSave,
   });
@@ -513,6 +537,7 @@ class _LegalNameCard extends StatelessWidget {
   final TextEditingController lastName;
   final TextEditingController birthdate;
   final bool locked;
+  final String lockedNote;
   final bool saving;
   final VoidCallback onSave;
 
@@ -533,7 +558,7 @@ class _LegalNameCard extends StatelessWidget {
                 children: [
                   Text(
                     locked
-                        ? 'Submitted with your ID. These details stay as staff review them.'
+                        ? lockedNote
                         : 'Used to match the ID you upload. You can edit it until you photograph your ID.',
                     style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
                   ),

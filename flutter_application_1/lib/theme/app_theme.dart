@@ -102,7 +102,9 @@ ThemeData qrideTheme(ColorScheme cs) => ThemeData(
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+        fillColor: cs.brightness == Brightness.dark
+            ? const Color(0xFF243044)
+            : cs.surfaceContainerHighest.withValues(alpha: 0.6),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide.none,

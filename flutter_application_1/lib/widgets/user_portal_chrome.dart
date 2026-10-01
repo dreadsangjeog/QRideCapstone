@@ -26,11 +26,13 @@ class RiderNavScope extends InheritedWidget {
     super.key,
     required this.goHome,
     required this.openPage,
+    required this.currentIndex,
     required super.child,
   });
 
   final VoidCallback goHome;
   final ValueChanged<int> openPage;
+  final int currentIndex;
 
   static RiderNavScope? maybeOf(BuildContext context) {
     return context.dependOnInheritedWidgetOfExactType<RiderNavScope>();
@@ -38,7 +40,9 @@ class RiderNavScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(RiderNavScope old) =>
-      goHome != old.goHome || openPage != old.openPage;
+      goHome != old.goHome ||
+      openPage != old.openPage ||
+      currentIndex != old.currentIndex;
 }
 
 /// Frosted circle used on the map and as a back control.

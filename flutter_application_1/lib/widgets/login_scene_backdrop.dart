@@ -387,7 +387,7 @@ class GlassAppBarBackdrop extends StatelessWidget {
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: isDark
-                  ? const [Color(0x80101828), Color(0x66101828)]
+                  ? const [Color(0xF2101828), Color(0xF0101828)]
                   : [
                       Colors.white.withValues(alpha: 0.62),
                       Colors.white.withValues(alpha: 0.44),

@@ -126,6 +126,7 @@ class _UserRootShellState extends State<UserRootShell> {
         child: RiderNavScope(
           goHome: _goHome,
           openPage: _openPage,
+          currentIndex: _index,
           child: Scaffold(
             key: _scaffoldKey,
             drawer: _RiderDrawer(currentIndex: _index, onPick: _onDrawerPick),

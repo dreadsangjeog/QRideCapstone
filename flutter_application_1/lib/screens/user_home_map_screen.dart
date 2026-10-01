@@ -388,9 +388,9 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 108),
               child: Material(
-                color: Colors.white.withValues(alpha: 0.94),
+                color: _mapSheetColor(context),
                 elevation: 4,
-                shadowColor: Colors.black12,
+                shadowColor: Colors.black26,
                 borderRadius: BorderRadius.circular(16),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -400,7 +400,10 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
                   child: Text(
                     _locationHint!,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: _mapSheetText(context),
+                    ),
                   ),
                 ),
               ),
@@ -432,6 +435,16 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   }
 }
 
+Color _mapSheetColor(BuildContext context) {
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return dark ? const Color(0xFF1B2433) : Colors.white.withValues(alpha: 0.96);
+}
+
+Color _mapSheetText(BuildContext context) {
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return dark ? const Color(0xFFE8EEF6) : const Color(0xFF1F2937);
+}
+
 class _ActiveRideCard extends StatelessWidget {
   const _ActiveRideCard({
     required this.rental,
@@ -461,9 +474,9 @@ class _ActiveRideCard extends StatelessWidget {
     final color = overtime ? const Color(0xFFDC2626) : QrideBrand.accent;
 
     return Material(
-      color: Colors.white.withValues(alpha: 0.96),
+      color: _mapSheetColor(context),
       elevation: 8,
-      shadowColor: Colors.black.withValues(alpha: 0.14),
+      shadowColor: Colors.black.withValues(alpha: 0.28),
       borderRadius: BorderRadius.circular(22),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
@@ -533,29 +546,31 @@ class _PendingRideCard extends StatelessWidget {
         ? '${rental.plannedMinutes ~/ 60}h'
         : '${rental.plannedMinutes}m';
     return Material(
-      color: Colors.white.withValues(alpha: 0.96),
+      color: _mapSheetColor(context),
       elevation: 8,
-      shadowColor: Colors.black.withValues(alpha: 0.14),
+      shadowColor: Colors.black.withValues(alpha: 0.28),
       borderRadius: BorderRadius.circular(22),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
+            Text(
               'Waiting for staff',
               style: TextStyle(
                 fontWeight: FontWeight.w800,
                 fontSize: 16,
-                color: Color(0xFFD97706),
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFFF5B942)
+                    : const Color(0xFFB45309),
               ),
             ),
             const SizedBox(height: 4),
             Text(
               'Your $hours request is in the queue. Ride time starts after they approve.',
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF5B6B80),
+                color: _mapSheetText(context),
               ),
             ),
             const SizedBox(height: 10),

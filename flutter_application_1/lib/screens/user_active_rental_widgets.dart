@@ -215,9 +215,11 @@ class _RiderLiveMapState extends State<_RiderLiveMap> {
               right: 8,
               bottom: 8,
               child: Material(
-                color: Colors.white,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFF1B2433)
+                    : Colors.white,
                 shape: const CircleBorder(),
-                elevation: 2,
+                elevation: 3,
                 child: InkWell(
                   customBorder: const CircleBorder(),
                   onTap: () {
@@ -242,8 +244,12 @@ class _RiderLiveMapState extends State<_RiderLiveMap> {
                       Icons.my_location_rounded,
                       size: 18,
                       color: widget.followUser
-                          ? const Color(0xFF1A73E8)
-                          : const Color(0xFF9CA3AF),
+                          ? (Theme.of(context).brightness == Brightness.dark
+                              ? const Color(0xFF8EBCFF)
+                              : const Color(0xFF1A73E8))
+                          : (Theme.of(context).brightness == Brightness.dark
+                              ? Colors.white
+                              : const Color(0xFF4B5563)),
                     ),
                   ),
                 ),
