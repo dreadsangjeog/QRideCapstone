@@ -11,11 +11,13 @@ import 'supabase_client.dart';
 /// Streams GPS + compass during an active rental and writes to Supabase
 /// (`rental_last_location` upsert + `rental_locations` history insert).
 ///
-/// Sole admin-map writer for the rental. Uses Geolocator’s Android foreground
-/// notification so the same stream keeps uploading in QRide, in another app,
-/// and with the screen locked (while-using permission + location FGS).
+/// On Android the rental foreground task is the only GPS client and the only
+/// admin-map writer. This service then only mirrors those fixes into the rider
+/// UI and forwards compass heading. Opening a second Geolocator stream made
+/// the admin pin flicker red/yellow and stop when the screen locked.
 ///
-/// Server uploads (admin map) are throttled to about every 3 seconds.
+/// On iOS this service is the writer. Server uploads are throttled to about
+/// every 3 seconds.
 ///
 /// GPS bearing only updates while moving. Phone rotation while standing still
 /// comes from the device compass so the admin map pin can turn in place.
@@ -26,7 +28,6 @@ class LocationTrackingService {
   StreamSubscription<Position>? _sub;
   StreamSubscription<CompassReading>? _compassSub;
   Timer? _heartbeat;
-  Timer? _pollTimer;
   Timer? _watchdog;
 
   /// Throttle is **post-success**: after a successful write, block writes for
@@ -44,6 +45,8 @@ class LocationTrackingService {
   Position? _lastPosition;
   Position? _pendingWrite;
   bool _pendingForce = false;
+  bool _mirrorOnly = false;
+  void Function(double heading)? _headingListener;
 
   /// Most recent position from the GPS stream / poll.
   final ValueNotifier<Position?> position = ValueNotifier<Position?>(null);
@@ -63,14 +66,14 @@ class LocationTrackingService {
   static const Duration _writeTimeout = Duration(seconds: 12);
   static const Duration _streamStall = Duration(seconds: 12);
 
-  /// Backup GPS poll. Network uploads are throttled separately via [minInterval].
-  static const Duration _pollEvery = Duration(seconds: 3);
-
   /// True while an active rental is being tracked in this isolate.
   bool get isTracking => _rentalId != null;
 
+  /// Android: UI is mirroring the foreground-task writer and must not open GPS.
+  bool get isMirroring => _mirrorOnly && _rentalId != null;
+
   /// True when the GPS stream/poll/heartbeat are actively listening.
-  bool get isStreamActive => _rentalId != null && _sub != null;
+  bool get isStreamActive => _rentalId != null && (_sub != null || _mirrorOnly);
 
   /// Ensures location service is on and permission is granted.
   Future<void> ensurePermissions() async {
@@ -103,7 +106,8 @@ class LocationTrackingService {
     }
   }
 
-  /// Screen locked or another app — flush last fix; stream/FGS stay running.
+  /// iOS: flush the last fix when the screen locks. Android uploads continue
+  /// in the foreground-task isolate, so this is not used there.
   Future<void> keepSharingWithScreenOff() async {
     if (_rentalId == null) return;
     final pos = _lastPosition;
@@ -112,11 +116,10 @@ class LocationTrackingService {
 
   /// App visible again. Only rebuild the stream if it died; otherwise flush.
   Future<void> resumeFromBackground() async {
-    if (_rentalId == null) return;
+    if (_rentalId == null || _mirrorOnly) return;
 
     if (_sub == null) {
       _listenStream(forceAndroidManager: _useLegacyAndroidManager);
-      _pollTimer ??= Timer.periodic(_pollEvery, (_) => unawaited(_pollOnce()));
       _watchdog ??= Timer.periodic(const Duration(seconds: 5), (_) {
         final last = _lastGpsAt;
         if (last == null) return;
@@ -150,8 +153,8 @@ class LocationTrackingService {
         pauseLocationUpdatesAutomatically: false,
       );
     }
-    // Geolocator FGS keeps the same stream + Supabase writes alive in QRide,
-    // another app, and with the screen locked (while-using + location FGS).
+    // Fallback only. The normal Android path does not open this stream.
+    // If it does start, it is the only location client (no second FGS).
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
         accuracy: LocationAccuracy.high,
@@ -200,7 +203,6 @@ class LocationTrackingService {
     _startCompass();
     await _seedFirstFix();
     _listenStream(forceAndroidManager: false);
-    _startPoll();
     _startWatchdog();
 
     // Heartbeat keeps server "last seen" fresh even if GPS is quiet.
@@ -247,13 +249,58 @@ class LocationTrackingService {
         );
   }
 
-  void _startPoll() {
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(_pollEvery, (_) => unawaited(_pollOnce()));
+  /// Rider UI mirror of the Android foreground-task writer.
+  ///
+  /// Does not open Geolocator. Compass heading is forwarded so the admin pin
+  /// can still turn while the bike is standing still.
+  Future<void> startMirror({
+    required String rentalId,
+    void Function(double heading)? onHeading,
+  }) async {
+    if (_mirrorOnly && _rentalId == rentalId) {
+      _headingListener = onHeading;
+      return;
+    }
+    await stopTracking();
+    _rentalId = rentalId;
+    _mirrorOnly = true;
+    _headingListener = onHeading;
+    _startCompass();
+  }
+
+  /// Applies a fix already uploaded by the foreground task.
+  void applyExternalFix({
+    required double latitude,
+    required double longitude,
+    required double accuracy,
+    double? heading,
+    required DateTime writtenAt,
+  }) {
+    if (_rentalId == null) return;
+    final pos = Position(
+      latitude: latitude,
+      longitude: longitude,
+      timestamp: writtenAt,
+      accuracy: accuracy,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: heading ?? _compassHeading ?? 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
+    _lastPosition = pos;
+    _lastGpsAt = writtenAt;
+    position.value = pos;
+    lastWriteAt.value = writtenAt;
+    lastError.value = null;
+    if (_compassHeading == null && heading != null) {
+      _publishHeading(heading);
+    }
   }
 
   Future<void> _pollOnce() async {
-    if (_rentalId == null) return;
+    if (_rentalId == null || _mirrorOnly) return;
     try {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -280,7 +327,7 @@ class LocationTrackingService {
   }
 
   Future<void> _restartStream() async {
-    if (_rentalId == null || _restartingStream) return;
+    if (_rentalId == null || _mirrorOnly || _restartingStream) return;
     _restartingStream = true;
     try {
       // Alternate fused vs legacy manager — some OEMs stall on one path.
@@ -358,9 +405,11 @@ class LocationTrackingService {
     final prev = heading.value;
     if (prev != null && (prev - h).abs() < 1.5) return;
     heading.value = h;
+    _headingListener?.call(h);
   }
 
   Future<void> _attemptWrite(Position pos, {bool force = false}) async {
+    if (_mirrorOnly) return;
     final rentalId = _rentalId;
     final userId = _userId;
     if (rentalId == null || userId == null) return;
@@ -508,8 +557,6 @@ class LocationTrackingService {
     _compassSub = null;
     _heartbeat?.cancel();
     _heartbeat = null;
-    _pollTimer?.cancel();
-    _pollTimer = null;
     _watchdog?.cancel();
     _watchdog = null;
     _writing = false;
@@ -522,6 +569,8 @@ class LocationTrackingService {
     _lastPosition = null;
     _pendingWrite = null;
     _pendingForce = false;
+    _mirrorOnly = false;
+    _headingListener = null;
     _rentalId = null;
     _userId = null;
     position.value = null;
@@ -534,7 +583,6 @@ class LocationTrackingService {
     _sub?.cancel();
     _compassSub?.cancel();
     _heartbeat?.cancel();
-    _pollTimer?.cancel();
     _watchdog?.cancel();
     position.dispose();
     heading.dispose();

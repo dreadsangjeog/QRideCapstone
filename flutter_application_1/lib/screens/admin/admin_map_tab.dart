@@ -39,6 +39,12 @@ class _AdminMapTabState extends State<AdminMapTab> {
   final Map<String, SmoothLatLng> _poses = {};
   /// Last stable pin signal per rental — used for yellow/red hysteresis.
   final Map<String, _RiderSignal> _signalByRental = {};
+
+  /// When the admin map last accepted a newer GPS sample for each rental.
+  /// Color follows this clock so an older fetch cannot turn a live pin yellow.
+  final Map<String, DateTime> _observedAtByRental = {};
+  final Map<String, DateTime> _recordedAtByRental = {};
+  int _loadGen = 0;
   bool _loadingRiders = false;
   DateTime? _lastRefresh;
   Timer? _refreshTimer;
@@ -77,7 +83,10 @@ class _AdminMapTabState extends State<AdminMapTab> {
   }
 
   _RiderSignal _signalFor(_MarkerRow r) {
-    return r.signalWithHysteresis(_signalByRental[r.rentalId]);
+    return r.signalWithHysteresis(
+      _signalByRental[r.rentalId],
+      anchor: _observedAtByRental[r.rentalId],
+    );
   }
 
   void _refreshStableSignals() {
@@ -155,6 +164,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
   }
 
   Future<void> _loadRiders({bool silent = false}) async {
+    final gen = ++_loadGen;
     if (!silent) setState(() => _loadingRiders = true);
     try {
       final rows = await widget.repo.fetchActiveRentalLastLocationsJoined();
@@ -162,29 +172,80 @@ class _AdminMapTabState extends State<AdminMapTab> {
           .map(_MarkerRow.fromJoined)
           .whereType<_MarkerRow>()
           .toList();
-      if (!mounted) return;
-      final ids = parsed.map((r) => r.rentalId).toSet();
-      for (final r in parsed) {
-        final pose = _poses.putIfAbsent(
-          r.rentalId,
-          () => SmoothLatLng(LatLng(r.lat, r.lng)),
-        );
-        pose.setTarget(LatLng(r.lat, r.lng), r.heading);
-      }
+      if (!mounted || gen != _loadGen) return;
+      final merged = _mergeFresher(parsed);
+      final ids = merged.map((r) => r.rentalId).toSet();
       _poses.removeWhere((id, _) => !ids.contains(id));
-      _offlineNotified.removeWhere((id) => !ids.contains(id));
+      _offlineNotified.removeWhere((id, _) => !ids.contains(id));
       _signalByRental.removeWhere((id, _) => !ids.contains(id));
+      _observedAtByRental.removeWhere((id, _) => !ids.contains(id));
+      _recordedAtByRental.removeWhere((id, _) => !ids.contains(id));
       setState(() {
-        _riders = parsed;
+        _riders = merged;
         _loadingRiders = false;
         _lastRefresh = DateTime.now();
       });
       _refreshStableSignals();
       _notifyNewlyOffline();
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || gen != _loadGen) return;
       setState(() => _loadingRiders = false);
     }
+  }
+
+  /// Drops out-of-order snapshots. A newer `recorded_at` moves the pin and
+  /// resets the live/yellow clock; an older one is ignored.
+  List<_MarkerRow> _mergeFresher(List<_MarkerRow> parsed) {
+    final byId = <String, _MarkerRow>{};
+    for (final row in parsed) {
+      final existing = byId[row.rentalId];
+      if (existing == null) {
+        byId[row.rentalId] = row;
+        continue;
+      }
+      final a = existing.recordedAt;
+      final b = row.recordedAt;
+      if (a == null || (b != null && b.isAfter(a))) byId[row.rentalId] = row;
+    }
+
+    final previousById = {for (final r in _riders) r.rentalId: r};
+    final now = DateTime.now().toUtc();
+    final merged = <_MarkerRow>[];
+    for (final incoming in byId.values) {
+      final prev = previousById[incoming.rentalId];
+      final prevAt = _recordedAtByRental[incoming.rentalId] ?? prev?.recordedAt;
+      final nextAt = incoming.recordedAt;
+      final isNewer =
+          nextAt != null && (prevAt == null || nextAt.isAfter(prevAt));
+      final isOlder =
+          nextAt != null && prevAt != null && nextAt.isBefore(prevAt);
+      final row = isOlder && prev != null ? prev : incoming;
+      merged.add(row);
+      if (isNewer && nextAt != null) {
+        _recordedAtByRental[row.rentalId] = nextAt.toUtc();
+        // First sample keeps its real age. Later samples count from arrival
+        // so a steady 3s upload stays red instead of bouncing through yellow.
+        if (prevAt == null) {
+          final age = row.age ?? Duration.zero;
+          _observedAtByRental[row.rentalId] = now.subtract(age);
+        } else {
+          _observedAtByRental[row.rentalId] = now;
+        }
+      } else if (!_observedAtByRental.containsKey(row.rentalId)) {
+        final age = row.age ?? Duration.zero;
+        _observedAtByRental[row.rentalId] = now.subtract(age);
+        if (row.recordedAt != null) {
+          _recordedAtByRental[row.rentalId] = row.recordedAt!.toUtc();
+        }
+      }
+      if (isOlder) continue;
+      final pose = _poses.putIfAbsent(
+        row.rentalId,
+        () => SmoothLatLng(LatLng(row.lat, row.lng)),
+      );
+      pose.setTarget(LatLng(row.lat, row.lng), row.heading);
+    }
+    return merged;
   }
 
   void _notifyNewlyOffline() {

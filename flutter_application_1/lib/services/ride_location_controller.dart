@@ -1,21 +1,26 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'location_tracking_service.dart';
 import 'rental_repository.dart';
+import 'ride_foreground_task.dart';
 import 'supabase_client.dart';
 
 /// Keeps rental GPS → admin uploads alive for the whole ride.
 ///
-/// Single writer: [LocationTrackingService] with Geolocator’s Android
-/// foreground notification. That is the path that already works while QRide
-/// is open, and it must stay running when the rider opens another app or
-/// locks the screen (while-using + location FGS — not “Allow all the time”).
+/// Android uses one writer: [RideForegroundTask]. Its isolate keeps reading
+/// GPS and uploading while QRide is open, in another app, or with the screen
+/// locked. The UI [LocationTrackingService] only mirrors those fixes.
 ///
-/// A second location foreground service was previously started on background;
-/// that competed for GPS and is why admin went “Update delayed” outside QRide.
+/// A second Geolocator stream beside that task stalled uploads (admin pin
+/// flickering red/yellow) and then stopped entirely once the UI isolate was
+/// frozen with the screen off.
+///
+/// iOS keeps writing from [LocationTrackingService] with background location.
 class RideLocationController with WidgetsBindingObserver {
   RideLocationController({
     RentalRepository? repo,
@@ -39,9 +44,16 @@ class RideLocationController with WidgetsBindingObserver {
 
   static const _shareEvery = Duration(seconds: 3);
 
+  bool get _usesForegroundWriter =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   Future<void> start() async {
     if (_started) return;
     _started = true;
+    if (_usesForegroundWriter) {
+      RideForegroundTask.init();
+      FlutterForegroundTask.addTaskDataCallback(_onFgTaskData);
+    }
     WidgetsBinding.instance.addObserver(this);
     _authSub = SupabaseClientProvider.client.auth.onAuthStateChange.listen(
       (data) {
@@ -49,8 +61,11 @@ class RideLocationController with WidgetsBindingObserver {
           unawaited(_clearAll());
           return;
         }
-        // Token refresh must not restart GPS.
-        if (data.event == AuthChangeEvent.tokenRefreshed) return;
+        // Refresh the task's token without tearing down GPS.
+        if (data.event == AuthChangeEvent.tokenRefreshed) {
+          unawaited(_pushAuthToForeground());
+          return;
+        }
         if (data.session != null) unawaited(_sync());
       },
     );
@@ -63,22 +78,50 @@ class RideLocationController with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.resumed:
-        unawaited(_onResumed());
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.hidden:
-      case AppLifecycleState.paused:
-        // Do not tear down Geolocator FGS — flush only.
-        unawaited(tracking.keepSharingWithScreenOff());
-      case AppLifecycleState.detached:
-        break;
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_onResumed());
+      return;
     }
+    if (state == AppLifecycleState.detached) return;
+    // Android uploads continue in the foreground-task isolate.
+    if (!_usesForegroundWriter) {
+      unawaited(tracking.keepSharingWithScreenOff());
+    }
+  }
+
+  void _onFgTaskData(Object data) {
+    if (data is! Map) return;
+    if (data['stopped'] == true) {
+      unawaited(_sync());
+      return;
+    }
+    final lat = data['lat'];
+    final lng = data['lng'];
+    if (lat is! num || lng is! num) return;
+    final acc = data['accuracy_m'];
+    final heading = data['heading'];
+    final atRaw = data['at']?.toString();
+    final at = atRaw == null
+        ? DateTime.now().toUtc()
+        : (DateTime.tryParse(atRaw) ?? DateTime.now().toUtc());
+    tracking.applyExternalFix(
+      latitude: lat.toDouble(),
+      longitude: lng.toDouble(),
+      accuracy: acc is num ? acc.toDouble() : 0,
+      heading: heading is num ? heading.toDouble() : null,
+      writtenAt: at,
+    );
+  }
+
+  void _sendHeading(double heading) {
+    RideForegroundTask.pushHeading(heading);
   }
 
   Future<void> _onResumed() async {
     await _sync();
-    await tracking.resumeFromBackground();
+    if (!_usesForegroundWriter) {
+      await tracking.resumeFromBackground();
+    }
   }
 
   Future<void> _sync() async {
@@ -101,8 +144,32 @@ class RideLocationController with WidgetsBindingObserver {
     try {
       final rental = await _repo.fetchMyActiveRental();
       if (rental != null && rental.isActive) {
-        // Same rental already tracking — leave the GPS stack alone.
-        if (_rentalId == rental.id && tracking.isTracking) {
+        if (_usesForegroundWriter) {
+          try {
+            // Drop any UI Geolocator stream before the task isolate reads GPS.
+            if (!tracking.isMirroring) {
+              await tracking.ensurePermissions();
+              await tracking.startMirror(
+                rentalId: rental.id,
+                onHeading: _sendHeading,
+              );
+            }
+            final running = await _ensureForegroundWriter(rental.id);
+            if (running) {
+              _rentalId = rental.id;
+              return;
+            }
+          } catch (e) {
+            // ignore: avoid_print
+            print('[RideLocation] foreground writer failed: $e');
+          }
+          if (tracking.isMirroring) await tracking.stopTracking();
+        }
+
+        // iOS, or Android if the foreground task could not start.
+        if (_rentalId == rental.id &&
+            tracking.isTracking &&
+            !tracking.isMirroring) {
           if (!tracking.isStreamActive) {
             await tracking.resumeFromBackground();
           }
@@ -126,9 +193,37 @@ class RideLocationController with WidgetsBindingObserver {
     await _clearAll();
   }
 
+  /// Starts the Android writer while the UI is allowed to start a foreground
+  /// service. Returns false when it is not running so the caller can fall back.
+  Future<bool> _ensureForegroundWriter(String rentalId) async {
+    final user = SupabaseClientProvider.client.auth.currentUser;
+    final session = SupabaseClientProvider.client.auth.currentSession;
+    if (user == null || session == null) return false;
+    try {
+      await RideForegroundTask.ensureRunning(
+        rentalId: rentalId,
+        userId: user.id,
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+      );
+      return RideForegroundTask.isRunning;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideLocation] foreground writer failed: $e');
+      return RideForegroundTask.isRunning;
+    }
+  }
+
+  Future<void> _pushAuthToForeground() async {
+    final rentalId = _rentalId;
+    if (!_usesForegroundWriter || rentalId == null) return;
+    await _ensureForegroundWriter(rentalId);
+  }
+
   Future<void> _clearAll() async {
     _rentalId = null;
     await tracking.stopTracking();
+    if (_usesForegroundWriter) await RideForegroundTask.stop();
   }
 
   void _subscribe() {
@@ -153,6 +248,9 @@ class RideLocationController with WidgetsBindingObserver {
 
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    if (_usesForegroundWriter) {
+      FlutterForegroundTask.removeTaskDataCallback(_onFgTaskData);
+    }
     await _authSub?.cancel();
     _authSub = null;
     _poll?.cancel();

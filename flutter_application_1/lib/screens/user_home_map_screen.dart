@@ -53,8 +53,9 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   bool _waitingLocationSettings = false;
 
   /// During a rental, prefer the shared tracker (same coords admin receives).
-  bool get _useRentalTracker =>
-      _hasActiveRide && (_rentalTracking?.isTracking ?? false);
+  /// [isTracking] flips as soon as the ride writer starts, before the rental
+  /// card poll, so the home map drops its own GPS stream immediately.
+  bool get _useRentalTracker => _rentalTracking?.isTracking ?? false;
 
   @override
   void initState() {
@@ -67,6 +68,10 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
       unawaited(_checkRental());
     });
     _tick = Timer.periodic(const Duration(milliseconds: 33), (_) {
+      if (_useRentalTracker && _posSub != null) {
+        unawaited(_posSub?.cancel());
+        _posSub = null;
+      }
       if (!_pose.tick() && !_hasActiveRide) return;
       if (!mounted) return;
       if (_hasActiveRide) _now = DateTime.now();
@@ -95,6 +100,10 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
 
   void _onRentalTrackingUpdate() {
     if (!_useRentalTracker) return;
+    if (_posSub != null) {
+      unawaited(_posSub?.cancel());
+      _posSub = null;
+    }
     final pos = _rentalTracking?.position.value;
     if (pos == null) return;
     final hdg = _rentalTracking?.heading.value;
@@ -251,7 +260,6 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   }
 
   @override
-  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_askLocationThenStart(fromResume: true));
@@ -260,6 +268,10 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
 
   Future<void> _askLocationThenStart({bool fromResume = false}) async {
     if (!mounted) return;
+    if (_useRentalTracker) {
+      await _syncLocalStreamMode();
+      return;
+    }
     if (await hasLocationAccessForRental()) {
       _waitingLocationSettings = false;
       await _startLocalLocation();

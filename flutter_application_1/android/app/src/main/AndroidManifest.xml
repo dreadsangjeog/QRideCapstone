@@ -47,16 +47,16 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        <!-- Sole location FGS: GPS → admin uploads for the whole rental
-             (in app, other app, screen lock). Do not start a second location
-             FGS alongside this — it contends for GPS and stalls admin updates. -->
+        <!-- Declared by Geolocator. Rental uploads do not start this service.
+             A second location FGS beside the one below stalls GPS. -->
         <service
             android:name="com.baseflow.geolocator.GeolocatorLocationService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location"
             android:stopWithTask="false" />
-        <!-- Kept declared for the plugin; rental GPS does not start this service. -->
+        <!-- Sole rental location FGS. Its isolate keeps uploading GPS while
+             QRide is open, in another app, or with the screen locked. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="location"

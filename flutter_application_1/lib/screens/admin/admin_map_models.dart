@@ -38,18 +38,26 @@ class _MarkerRow {
   /// Must beat the threshold by this much to re-enter a fresher band.
   static const recoverSlack = Duration(seconds: 8);
 
-  Duration? get age {
-    final at = recordedAt;
+  Duration? ageFrom(DateTime? at) {
     if (at == null) return null;
     final d = DateTime.now().toUtc().difference(at.toUtc());
     return d.isNegative ? Duration.zero : d;
   }
 
+  Duration? get age => ageFrom(recordedAt);
+
   _RiderSignal get signal => signalWithHysteresis(null);
 
   /// Stable signal for map pins — keep prior band until age clearly crosses.
-  _RiderSignal signalWithHysteresis(_RiderSignal? previous) {
-    final a = age;
+  ///
+  /// [anchor] is when the admin last saw a newer fix. That stays smooth when
+  /// a late response carries an older `recorded_at`, which was flipping the
+  /// pin between red and yellow.
+  _RiderSignal signalWithHysteresis(
+    _RiderSignal? previous, {
+    DateTime? anchor,
+  }) {
+    final a = ageFrom(anchor ?? recordedAt);
     if (a == null) return _RiderSignal.waiting;
 
     final prev = previous ?? _RiderSignal.waiting;
