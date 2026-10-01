@@ -176,7 +176,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
       final merged = _mergeFresher(parsed);
       final ids = merged.map((r) => r.rentalId).toSet();
       _poses.removeWhere((id, _) => !ids.contains(id));
-      _offlineNotified.removeWhere((id, _) => !ids.contains(id));
+      _offlineNotified.removeWhere((id) => !ids.contains(id));
       _signalByRental.removeWhere((id, _) => !ids.contains(id));
       _observedAtByRental.removeWhere((id, _) => !ids.contains(id));
       _recordedAtByRental.removeWhere((id, _) => !ids.contains(id));
