@@ -5,7 +5,9 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/bike.dart';
 import '../../services/admin_repository.dart';
 import '../../services/auth_service.dart';
+import '../../utils/bike_qr_image.dart';
 import '../../utils/bike_qr_payload.dart';
+import '../../utils/save_bytes_file.dart';
 import '../../widgets/bike_photo.dart';
 import '../../widgets/login_scene_backdrop.dart';
 import '../../widgets/qride_glass.dart';
@@ -43,6 +45,7 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
   Bike? _bike;
   Uint8List? _pendingPhoto;
   bool _photoBusy = false;
+  bool _downloadingQr = false;
 
   bool get _isExisting => widget.initialBike != null;
 
@@ -275,8 +278,31 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
     await Clipboard.setData(ClipboardData(text: p));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('QR payload copied to clipboard')),
+      const SnackBar(content: Text('Bike code copied')),
     );
+  }
+
+  Future<void> _downloadQr() async {
+    final code = _payload;
+    if (code == null || code.isEmpty || _downloadingQr) return;
+    setState(() => _downloadingQr = true);
+    try {
+      final bytes = await renderBikeQrPng(code);
+      final safe = code.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+      await saveBytesFile(
+        filename: 'qride-${safe.isEmpty ? 'bike' : safe}.png',
+        bytes: bytes,
+        mime: 'image/png',
+        subject: 'QRide $code',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not download the QR. $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _downloadingQr = false);
+    }
   }
 
   Widget _photoField(ThemeData theme, ColorScheme cs) {
@@ -415,29 +441,7 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         children: [
-          if (_isExisting)
-            Card(
-              color: cs.primaryContainer.withValues(alpha: 0.35),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline_rounded, color: cs.primary),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'This bike is already in the database. The QR encodes its code so riders can start a rental.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: cs.onPrimaryContainer,
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else ...[
+          if (!_isExisting) ...[
             Text(
               'Complete all fields, then tap Save. The app will create the bike in Supabase and then show a printable black-and-white QR (generated on this device—no extra service).',
               style: theme.textTheme.bodyMedium?.copyWith(
@@ -543,14 +547,37 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _copyPayload,
-                      icon: const Icon(Icons.copy_rounded, size: 20),
-                      label: const Text('Copy encoded value'),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _downloadingQr ? null : _downloadQr,
+                          icon: _downloadingQr
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: cs.onPrimary,
+                                  ),
+                                )
+                              : const Icon(Icons.download_rounded, size: 20),
+                          label: Text(
+                            _downloadingQr ? 'Preparing…' : 'Download QR',
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _copyPayload,
+                          icon: const Icon(Icons.copy_rounded, size: 20),
+                          label: const Text('Copy bike code'),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Screenshot or print this code and attach it to the bike.',
+                      'Download saves a picture of the QR and the bike code only.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: cs.onSurfaceVariant,
                         height: 1.4,

@@ -233,7 +233,7 @@ class _NotificationsInboxPanelState extends State<NotificationsInboxPanel> {
               const Spacer(),
               TextButton(
                 onPressed: _markAll,
-                child: const Text('Mark all'),
+                child: const Text('Mark all read'),
               ),
               IconButton(
                 tooltip: 'Close',

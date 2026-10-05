@@ -754,6 +754,18 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
     _total = TextEditingController(
       text: roundPeso(r.actualCost ?? charge.total).toStringAsFixed(0),
     );
+    _penalty.addListener(_syncTotalFromPenalty);
+  }
+
+  void _syncTotalFromPenalty() {
+    final p = double.tryParse(_penalty.text.trim().replaceAll(',', ''));
+    if (p == null || p < 0) return;
+    final next = roundPeso(_clockCharge.base + p).toStringAsFixed(0);
+    if (_total.text == next) return;
+    _total.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
   }
 
   @override
@@ -808,6 +820,7 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
     final sugPen = charge.penalty;
 
     return AlertDialog(
+      constraints: const BoxConstraints(minWidth: 280, maxWidth: 420),
       title: const Text('Adjust billing'),
       content: SingleChildScrollView(
         child: Column(
@@ -870,7 +883,8 @@ class _AdjustEndedBillingDialogState extends State<_AdjustEndedBillingDialog> {
                 labelText: 'Total charged (₱)',
                 border: OutlineInputBorder(),
                 prefixText: '₱ ',
-                helperText: 'Usually base + penalty; increase or waive as needed.',
+                helperText:
+                    'Updates to base + penalty. You can still type a different total.',
               ),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               inputFormatters: [

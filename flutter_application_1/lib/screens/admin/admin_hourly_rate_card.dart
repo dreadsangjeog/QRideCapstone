@@ -49,6 +49,7 @@ class HourlyRateCardState extends State<HourlyRateCard> {
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
         return AlertDialog(
+          constraints: const BoxConstraints(minWidth: 280, maxWidth: 400),
           icon: Icon(Icons.payments_outlined, color: cs.primary),
           title: const Text('Hourly bike fee'),
           content: Column(
@@ -56,7 +57,7 @@ class HourlyRateCardState extends State<HourlyRateCard> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Completed rides keep the amount already recorded. From the moment you save, new requests and the rest of an open ride use this fee. Reports follow those amounts, so past sales stay put and new rides are not left on the old fee.',
+                'New requests and the rest of an open ride use this fee. Completed rides keep the amount already saved.',
               ),
               const SizedBox(height: 16),
               TextField(
@@ -121,16 +122,24 @@ class HourlyRateCardState extends State<HourlyRateCard> {
     final cs = theme.colorScheme;
     final rate = _rate;
     return Material(
-      color: cs.primaryContainer.withValues(alpha: 0.35),
+      color: cs.surface.withValues(alpha: 0.72),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.primary.withValues(alpha: 0.25)),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
-            Icon(Icons.payments_outlined, color: cs.primary),
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.payments_outlined, color: cs.primary, size: 20),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -138,28 +147,24 @@ class HourlyRateCardState extends State<HourlyRateCard> {
                 children: [
                   Text(
                     'Hourly fee',
-                    style: theme.textTheme.labelLarge?.copyWith(
+                    style: theme.textTheme.labelMedium?.copyWith(
                       color: cs.onSurfaceVariant,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   Text(
-                    _loading || rate == null ? '…' : '₱${_money(rate)} / hour',
-                    style: theme.textTheme.titleLarge?.copyWith(
+                    _loading || rate == null
+                        ? '…'
+                        : '₱${_money(rate)} per hour',
+                    style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Text(
-                    'Applies from the moment you save. Completed rides stay as recorded.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
                     ),
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            FilledButton(
+            OutlinedButton(
               onPressed: _loading || _saving ? null : _edit,
               child: Text(_saving ? 'Saving…' : 'Change'),
             ),
