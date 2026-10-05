@@ -159,7 +159,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab>
               const AdminPageHeader(
                 title: 'Rental history',
                 subtitle:
-                    'Newest first · expand a row for timestamps and billing · use the pencil to correct charges',
+                    'Most recent activity first · an ended ride is ordered by when it ended, not when it was requested',
               ),
               const SizedBox(height: 14),
               Wrap(

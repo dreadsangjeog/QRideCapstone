@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/kyc_repository.dart';
+import '../../utils/admin_sort.dart';
 import '../../widgets/login_scene_backdrop.dart';
 import '../../widgets/qride_glass.dart';
 import '../../widgets/user_portal_chrome.dart';
@@ -290,9 +291,11 @@ class _AdminVerifyUsersTabState extends State<AdminVerifyUsersTab>
         return bt.compareTo(at);
       });
     } else {
-      rows.sort(
-        (a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-      );
+      rows.sort((a, b) {
+        final byName = compareNatural(a.displayName, b.displayName);
+        if (byName != 0) return byName;
+        return compareNatural(a.username, b.username);
+      });
     }
     if (rows.isEmpty) {
       return ListView(

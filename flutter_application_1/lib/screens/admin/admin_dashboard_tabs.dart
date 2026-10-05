@@ -131,12 +131,16 @@ class _BikesTabState extends State<_BikesTab> {
               filtered.sort((a, b) {
                 final at = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
                 final bt = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-                return bt.compareTo(at);
+                final byTime = bt.compareTo(at);
+                if (byTime != 0) return byTime;
+                return compareNatural(bikeSortName(a), bikeSortName(b));
               });
             } else {
-              filtered.sort(
-                (a, b) => a.code.toLowerCase().compareTo(b.code.toLowerCase()),
-              );
+              filtered.sort((a, b) {
+                final byName = compareNatural(bikeSortName(a), bikeSortName(b));
+                if (byName != 0) return byName;
+                return compareNatural(a.code, b.code);
+              });
             }
             if (bikes.isEmpty) {
               return ListView(
@@ -480,7 +484,7 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
                     AdminPageHeader(
                       title: 'Active rentals',
                       subtitle:
-                          '${rentals.length} ride${rentals.length == 1 ? '' : 's'} in progress',
+                          '${rentals.length} ride${rentals.length == 1 ? '' : 's'} in progress · ending soonest first',
                       trailing: IconButton(
                         tooltip: 'Refresh',
                         onPressed: _refresh,

@@ -6,6 +6,7 @@ import '../../models/rental_with_bike.dart';
 import '../../services/admin_repository.dart';
 import '../../services/analytics_repository.dart';
 import '../../theme/brand.dart';
+import '../../utils/admin_sort.dart';
 import '../../utils/rental_billing.dart';
 import '../../widgets/qride_glass.dart';
 import 'admin_layout.dart';
@@ -74,7 +75,11 @@ class AdminHomeTabState extends State<AdminHomeTab> {
     } catch (_) {}
     if (!mounted) return;
     setState(() {
-      _bikes = [...bikes]..sort((a, b) => a.code.compareTo(b.code));
+      _bikes = [...bikes]..sort((a, b) {
+        final byName = compareNatural(bikeSortName(a), bikeSortName(b));
+        if (byName != 0) return byName;
+        return compareNatural(a.code, b.code);
+      });
       _active = activeCount;
       _week = week;
       _pending = pending.take(5).toList();

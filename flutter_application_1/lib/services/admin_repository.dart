@@ -7,6 +7,7 @@ import '../models/bike.dart';
 import '../models/rental.dart';
 import '../models/rental_location.dart';
 import '../models/rental_with_bike.dart';
+import '../utils/admin_sort.dart';
 import 'supabase_client.dart';
 
 const _rentalColumns = '*, bikes(*), rider_name';
@@ -305,14 +306,17 @@ class AdminRepository {
     }
 
     try {
-      return await _rentalsWithProfiles(await load(_rentalColumns));
+      return _sortActive(await _rentalsWithProfiles(await load(_rentalColumns)));
     } catch (e) {
       if (!_missingRiderName(e)) rethrow;
-      return await _rentalsWithProfiles(await load(_rentalColumnsLegacy));
+      return _sortActive(
+        await _rentalsWithProfiles(await load(_rentalColumnsLegacy)),
+      );
     }
   }
 
-  /// Full rental log for admin (newest first). Optional [status] filters to one status.
+  /// Full rental log for admin (most recent activity first).
+  /// Optional [status] filters to one status.
   Future<List<RentalWithBike>> fetchRentalsHistory({
     int limit = 500,
     String? status,
@@ -326,11 +330,29 @@ class AdminRepository {
     }
 
     try {
-      return await _rentalsWithProfiles(await load(_rentalColumns));
+      return _sortHistory(await _rentalsWithProfiles(await load(_rentalColumns)));
     } catch (e) {
       if (!_missingRiderName(e)) rethrow;
-      return await _rentalsWithProfiles(await load(_rentalColumnsLegacy));
+      return _sortHistory(
+        await _rentalsWithProfiles(await load(_rentalColumnsLegacy)),
+      );
     }
+  }
+
+  List<RentalWithBike> _sortHistory(List<RentalWithBike> rows) {
+    rows.sort((a, b) {
+      final byTime = rentalActivityAt(b.rental).compareTo(
+        rentalActivityAt(a.rental),
+      );
+      if (byTime != 0) return byTime;
+      return b.rental.id.compareTo(a.rental.id);
+    });
+    return rows;
+  }
+
+  List<RentalWithBike> _sortActive(List<RentalWithBike> rows) {
+    rows.sort((a, b) => compareActiveRentals(a.rental, b.rental));
+    return rows;
   }
 
   /// Pending rental requests waiting for admin approval.
