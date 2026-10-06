@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../utils/peso.dart';
 import 'notification_repository.dart';
+import 'ride_timer_alerts.dart';
 
 /// Wraps flutter_local_notifications for rental-related alerts.
 ///
@@ -29,26 +31,93 @@ class NotificationService {
   static bool bannersEnabled = true;
   static DateTime? _lastKycCue;
 
-  static const _channel = AndroidNotificationChannel(
+  /// Null on web, where Int64List is unsupported and there are no
+  /// notification channels.
+  static final Int64List? _vibratePattern = kIsWeb
+      ? null
+      : Int64List.fromList(const [0, 280, 120, 280]);
+
+  /// Android 8+ takes sound and vibration from the channel and ignores the
+  /// per-notification flags, so each Sound/Vibration/banner choice has its
+  /// own channel. Android restores a deleted channel's old settings when its
+  /// ID is reused, so an ID must always mean the same choice. Older IDs are
+  /// dropped because a channel created once without sound stays silent.
+  static const _variants = [
+    'svb',
+    'svt',
+    'snb',
+    'snt',
+    'qvb',
+    'qvt',
+    'qnb',
+    'qnt',
+  ];
+  static const _legacyChannels = [
     'qride_rental',
-    'Rental Alerts',
-    description: 'Time warnings, approvals, and receipts for active rentals.',
-    importance: Importance.high,
-    playSound: true,
-    enableVibration: true,
-  );
-
-  static const _kycChannel = AndroidNotificationChannel(
     'qride_kyc',
-    'Identity alerts',
-    description: 'When staff approve or reject your ID.',
-    importance: Importance.max,
-    playSound: true,
-    enableVibration: true,
-  );
+    'qride_rental_sv',
+    'qride_rental_sn',
+    'qride_rental_qv',
+    'qride_rental_qn',
+    'qride_kyc_sv',
+    'qride_kyc_sn',
+    'qride_kyc_qv',
+    'qride_kyc_qn',
+  ];
 
-  static Future<void> loadPrefs() async {
+  static String get _variant =>
+      '${soundEnabled ? 's' : 'q'}'
+      '${vibrationEnabled ? 'v' : 'n'}'
+      '${bannersEnabled ? 'b' : 't'}';
+
+  static Importance get _alertImportance => bannersEnabled
+      ? Importance.high
+      : Importance.defaultImportance;
+
+  static AndroidNotificationChannel get _channel => AndroidNotificationChannel(
+        'qride_alerts_$_variant',
+        'Rental alerts',
+        description:
+            'Time warnings, approvals, and receipts for active rentals.',
+        importance: _alertImportance,
+        playSound: soundEnabled,
+        enableVibration: vibrationEnabled,
+        vibrationPattern: vibrationEnabled ? _vibratePattern : null,
+        audioAttributesUsage: AudioAttributesUsage.notification,
+      );
+
+  static AndroidNotificationChannel get _kycChannel =>
+      AndroidNotificationChannel(
+        'qride_identity_$_variant',
+        'Identity alerts',
+        description: 'When staff approve or reject your ID.',
+        importance: bannersEnabled ? Importance.max : Importance.defaultImportance,
+        playSound: soundEnabled,
+        enableVibration: vibrationEnabled,
+        vibrationPattern: vibrationEnabled ? _vibratePattern : null,
+        audioAttributesUsage: AudioAttributesUsage.notification,
+      );
+
+  static Future<void> _syncChannels() async {
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) return;
+    final rental = _channel;
+    final kyc = _kycChannel;
+    final unused = [
+      ..._legacyChannels,
+      for (final v in _variants) ...['qride_rental_$v', 'qride_kyc_$v'],
+    ].where((id) => id != rental.id && id != kyc.id);
+    for (final id in unused) {
+      await android.deleteNotificationChannel(id);
+    }
+    await android.createNotificationChannel(rental);
+    await android.createNotificationChannel(kyc);
+  }
+
+  static Future<void> loadPrefs({bool reload = false}) async {
     final p = await SharedPreferences.getInstance();
+    if (reload) await p.reload();
     soundEnabled = p.getBool(_prefsSound) ?? true;
     vibrationEnabled = p.getBool(_prefsVibrate) ?? true;
     bannersEnabled = p.getBool(_prefsBanners) ?? true;
@@ -58,31 +127,36 @@ class NotificationService {
     soundEnabled = value;
     final p = await SharedPreferences.getInstance();
     await p.setBool(_prefsSound, value);
+    if (_ready) await _syncChannels();
   }
 
   static Future<void> setVibrationEnabled(bool value) async {
     vibrationEnabled = value;
     final p = await SharedPreferences.getInstance();
     await p.setBool(_prefsVibrate, value);
+    if (_ready) await _syncChannels();
   }
 
   static Future<void> setBannersEnabled(bool value) async {
     bannersEnabled = value;
     final p = await SharedPreferences.getInstance();
     await p.setBool(_prefsBanners, value);
+    if (_ready) await _syncChannels();
   }
+
+  /// Plays one alert with the current sound, vibration, and banner choices.
+  static Future<void> showTestAlert() => _show(
+        id: 19,
+        title: 'QRide alert test',
+        body: 'This is how a rental alert sounds and vibrates.',
+      );
 
   static Future<void> init() async {
     if (_ready) return;
     await loadPrefs();
 
-    final androidPlugin = _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.createNotificationChannel(_channel);
-    await androidPlugin?.createNotificationChannel(_kycChannel);
-
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings =
+        AndroidInitializationSettings('ic_launcher_foreground');
     const ios = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -92,6 +166,7 @@ class NotificationService {
     await _plugin.initialize(
       const InitializationSettings(android: androidSettings, iOS: ios),
     );
+    await _syncChannels();
 
     _ready = true;
   }
@@ -116,8 +191,13 @@ class NotificationService {
     AndroidNotificationChannel? channel,
   }) async {
     await init();
-    if (!bannersEnabled) return;
+    // Sound and vibration are delivered by the system notification. Turning
+    // banners off only lowers it from a pop-up to the tray.
+    if (!bannersEnabled && !soundEnabled && !vibrationEnabled) return;
     final used = channel ?? _channel;
+    final alertImportance = importance == Importance.max && bannersEnabled
+        ? Importance.max
+        : used.importance;
     await _plugin.show(
       id,
       title,
@@ -127,16 +207,21 @@ class NotificationService {
           used.id,
           used.name,
           channelDescription: used.description,
-          importance: importance,
-          priority: importance == Importance.max
+          importance: alertImportance,
+          priority: alertImportance == Importance.max
               ? Priority.max
-              : Priority.high,
-          icon: '@mipmap/ic_launcher',
+              : alertImportance == Importance.high
+                  ? Priority.high
+                  : Priority.defaultPriority,
+          icon: 'ic_launcher_foreground',
           playSound: soundEnabled,
           enableVibration: vibrationEnabled,
-          silent: !soundEnabled && !vibrationEnabled,
-          category: AndroidNotificationCategory.status,
+          vibrationPattern: vibrationEnabled ? _vibratePattern : null,
+          silent: false,
+          category: AndroidNotificationCategory.reminder,
           audioAttributesUsage: AudioAttributesUsage.notification,
+          visibility: NotificationVisibility.public,
+          ticker: title,
         ),
         iOS: DarwinNotificationDetails(
           presentSound: soundEnabled,
@@ -193,18 +278,24 @@ class NotificationService {
         body: 'Your ride on $bikeLabel has started. Enjoy!',
       );
 
-  static Future<void> notifyFiveMinuteWarning() => _show(
-        id: 11,
-        title: '5 minutes left',
-        body: 'Your rental is about to expire. Head back soon.',
+  static Future<void> notifyRideTimer(RideTimerAlert alert) => _show(
+        id: alert.notificationId,
+        title: alert.title,
+        body: alert.body,
+        importance: alert == RideTimerAlert.overtime
+            ? Importance.max
+            : Importance.high,
       );
 
-  static Future<void> notifyOvertimeStarted() => _show(
-        id: 12,
-        title: 'Overtime — penalty accruing',
-        body: 'Your rental time has passed. A penalty fee is now being added.',
-        importance: Importance.max,
-      );
+  /// Same alert, posted from the rental service isolate. Its copy of the
+  /// switches is reloaded because the rider may have changed them in the app.
+  static Future<void> notifyRideTimerFromService(RideTimerAlert alert) async {
+    if (_ready) {
+      await loadPrefs(reload: true);
+      await _syncChannels();
+    }
+    await notifyRideTimer(alert);
+  }
 
   static Future<void> notifyRentalEnded({
     required double totalCost,

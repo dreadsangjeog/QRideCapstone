@@ -3,10 +3,13 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 import 'kyc_auto_match_result.dart';
+import 'kyc_face_embedder.dart';
+import 'kyc_face_math.dart';
 
 Future<KycAutoMatchResult> reviewKycPhotos({
   required Uint8List idBytes,
@@ -169,9 +172,12 @@ Future<KycAutoMatchResult> reviewFaces({
     return KycAutoMatchResult(
       nameMatch: true,
       photoMatch: photo.ok,
-      note: photo.ok
-          ? 'Faces match. Staff will do the final verification.'
-          : photo.hint,
+      note: photo.hint,
+      faceVerdict: photo.verdict,
+      faceScore: photo.score,
+      unreadable: photo.unreadable,
+      idFace: photo.idFace,
+      liveFace: photo.liveFace,
     );
   } finally {
     try {
@@ -182,9 +188,26 @@ Future<KycAutoMatchResult> reviewFaces({
 }
 
 class _Check {
-  const _Check({required this.ok, required this.hint});
+  const _Check({
+    required this.ok,
+    required this.hint,
+    this.verdict,
+    this.score,
+    this.unreadable,
+    this.idFace,
+    this.liveFace,
+  });
+
+  const _Check.unreadable(KycFaceStep step, String hint)
+      : this(ok: false, hint: hint, unreadable: step);
+
   final bool ok;
   final String hint;
+  final KycFaceVerdict? verdict;
+  final double? score;
+  final KycFaceStep? unreadable;
+  final Uint8List? idFace;
+  final Uint8List? liveFace;
 }
 
 class _NameCheck {
@@ -481,24 +504,17 @@ bool _firstOnLines(List<String> lines, List<String> first, {required String avoi
   return _phraseIn(lines.join(' '), first);
 }
 
+/// A readable face: where it sits in the image at [path] and how it is turned.
 class _FaceSig {
   const _FaceSig({
-    required this.points,
-    required this.mouthOverEyes,
-    required this.noseY,
-    required this.jawOverEyes,
-    required this.aspect,
+    required this.path,
+    required this.warp,
     required this.yaw,
-    required this.roll,
   });
 
-  final Map<FaceLandmarkType, Offset> points;
-  final double mouthOverEyes;
-  final double noseY;
-  final double jawOverEyes;
-  final double aspect;
+  final String path;
+  final FaceWarp warp;
   final double yaw;
-  final double roll;
 }
 
 class _LocatedFace {
@@ -507,12 +523,16 @@ class _LocatedFace {
     required this.path,
     required this.size,
     required this.sig,
+    this.crop,
   });
 
   final Face face;
   final String path;
   final Size size;
   final _FaceSig? sig;
+
+  /// Close crop around the printed face.
+  final File? crop;
 }
 
 Future<_Check> _facesMatch(String idPath, String selfiePath) async {
@@ -521,10 +541,9 @@ Future<_Check> _facesMatch(String idPath, String selfiePath) async {
   try {
     final idFound = await _locatePrintedFace(idPath, extras);
     if (idFound == null) {
-      return const _Check(
-        ok: false,
-        hint:
-            'Hold closer so the printed face on the ID is sharp and inside the frame.',
+      return const _Check.unreadable(
+        KycFaceStep.idPhoto,
+        'Hold closer so the printed face on the ID is sharp and inside the frame.',
       );
     }
 
@@ -545,15 +564,15 @@ Future<_Check> _facesMatch(String idPath, String selfiePath) async {
     final liveSize = await _fileImageSize(selfiePath);
     final liveFace = _pickLiveFace(liveFaces, liveSize);
     if (liveFace == null) {
-      return const _Check(
-        ok: false,
-        hint: 'The live selfie must show your face looking at the camera.',
+      return const _Check.unreadable(
+        KycFaceStep.liveSelfie,
+        'The live selfie must show your face looking at the camera.',
       );
     }
 
     liveCrop = await _cropFaceFile(selfiePath, liveFace.boundingBox, liveSize);
-    var id = idFound.sig;
-    var live = _faceSig(liveFace);
+    final id = idFound.sig;
+    var live = _faceSig(liveFace, selfiePath);
     if (liveCrop != null) {
       final closeup = FaceDetector(
         options: FaceDetectorOptions(
@@ -568,7 +587,7 @@ Future<_Check> _facesMatch(String idPath, String selfiePath) async {
           InputImage.fromFilePath(liveCrop.path),
         );
         if (closer.isNotEmpty) {
-          live = _faceSig(closer.first) ?? live;
+          live = _faceSig(_largestFace(closer), liveCrop.path) ?? live;
         }
       } finally {
         await closeup.close();
@@ -576,47 +595,50 @@ Future<_Check> _facesMatch(String idPath, String selfiePath) async {
     }
 
     if (id == null) {
-      return const _Check(
-        ok: false,
-        hint:
-            'The printed face on the ID is not clear enough. Hold closer and keep it sharp.',
+      return const _Check.unreadable(
+        KycFaceStep.idPhoto,
+        'The printed face on the ID is not clear enough. Hold closer and keep it sharp.',
       );
     }
     if (live == null) {
-      return const _Check(
-        ok: false,
-        hint:
-            'Could not read the live selfie. Look straight at the camera in good light.',
+      return const _Check.unreadable(
+        KycFaceStep.liveSelfie,
+        'Could not read the live selfie. Look straight at the camera in good light.',
       );
     }
     if (live.yaw.abs() > 18) {
-      return const _Check(
-        ok: false,
-        hint: 'Look straight at the camera so your face lines up with the ID.',
+      return const _Check.unreadable(
+        KycFaceStep.liveSelfie,
+        'Look straight at the camera so your face lines up with the ID.',
       );
     }
     if (id.yaw.abs() > 32) {
-      return const _Check(
-        ok: false,
-        hint: 'The ID photo must show a front-facing face.',
-      );
-    }
-    if ((id.roll - live.roll).abs() > 22) {
-      return const _Check(
-        ok: false,
-        hint: 'Hold the phone level so the selfie lines up with the ID photo.',
+      return const _Check.unreadable(
+        KycFaceStep.idPhoto,
+        'The ID photo must show a front-facing face.',
       );
     }
 
-    final score = _faceScore(id, live);
-    if (score > 0.30) {
-      return const _Check(
-        ok: false,
-        hint:
-            'The live selfie does not match the face printed on the ID. Use your own ID and look at the camera.',
-      );
-    }
-    return const _Check(ok: true, hint: '');
+    final idFace = await _readOrNull(idFound.crop);
+    final liveFaceCrop = await _readOrNull(liveCrop);
+    final score = await _faceSimilarity(id, live);
+    final verdict =
+        score == null ? KycFaceVerdict.unsure : kycFaceVerdict(score);
+    return _Check(
+      ok: verdict != KycFaceVerdict.mismatch,
+      verdict: verdict,
+      score: score,
+      idFace: idFace,
+      liveFace: liveFaceCrop,
+      hint: switch (verdict) {
+        KycFaceVerdict.match =>
+          'Your selfie matches the ID photo. Staff will do the final check.',
+        KycFaceVerdict.unsure =>
+          'Staff will compare your selfie with the ID photo.',
+        KycFaceVerdict.mismatch =>
+          'The live selfie does not match the face printed on the ID. Use your own ID, photograph it up close, and face the camera in good light.',
+      },
+    );
   } finally {
     try {
       await liveCrop?.delete();
@@ -624,6 +646,40 @@ Future<_Check> _facesMatch(String idPath, String selfiePath) async {
         await extra.delete();
       }
     } catch (_) {}
+  }
+}
+
+/// Null when the face model cannot run, so staff compare the photos instead.
+Future<double?> _faceSimilarity(_FaceSig id, _FaceSig live) async {
+  KycFaceEmbedder? embedder;
+  try {
+    embedder = await KycFaceEmbedder.open();
+    final a = await _signatureOf(embedder, id);
+    final b = await _signatureOf(embedder, live);
+    return kycFaceSimilarity(a, b);
+  } catch (e) {
+    debugPrint('Face model could not run: $e');
+    return null;
+  } finally {
+    embedder?.close();
+  }
+}
+
+Future<Float32List> _signatureOf(KycFaceEmbedder embedder, _FaceSig sig) async {
+  final image = await decodeFaceImage(sig.path);
+  try {
+    return await embedder.embed(image, sig.warp);
+  } finally {
+    image.dispose();
+  }
+}
+
+Future<Uint8List?> _readOrNull(File? file) async {
+  if (file == null) return null;
+  try {
+    return await file.readAsBytes();
+  } catch (_) {
+    return null;
   }
 }
 
@@ -687,16 +743,22 @@ Future<_LocatedFace?> _readPrintedOn({
   final size = await _fileImageSize(file.path);
   final pick = _pickPrintedFace(faces, size);
   if (pick == null) return null;
-  var sig = _faceSig(pick);
+  var sig = _faceSig(pick, file.path);
   final crop = await _cropFaceFile(file.path, pick.boundingBox, size);
   if (crop != null) {
     extras.add(crop);
     final closer = await closeup.processImage(InputImage.fromFilePath(crop.path));
     if (closer.isNotEmpty) {
-      sig = _faceSig(closer.first) ?? sig;
+      sig = _faceSig(_largestFace(closer), crop.path) ?? sig;
     }
   }
-  return _LocatedFace(face: pick, path: file.path, size: size, sig: sig);
+  return _LocatedFace(
+    face: pick,
+    path: file.path,
+    size: size,
+    sig: sig,
+    crop: crop,
+  );
 }
 
 Future<List<File>> _idSearchImages(String path, List<File> extras) async {
@@ -795,14 +857,11 @@ Future<File?> _writeImageRect(
   return file;
 }
 
+/// The main photo on the card. Cards with a small ghost copy of the photo
+/// show the same face twice, and the ghost is too faint to match well.
 Face? _pickPrintedFace(List<Face> faces, Size frame) {
   if (faces.isEmpty) return null;
-  if (frame.width <= 0 || frame.height <= 0) {
-    final copy = [...faces]..sort(
-        (a, b) => a.boundingBox.height.compareTo(b.boundingBox.height),
-      );
-    return copy.first;
-  }
+  if (frame.width <= 0 || frame.height <= 0) return _largestFace(faces);
   final printed = faces.where((f) {
     final box = f.boundingBox;
     if (box.width < 14 || box.height < 16) return false;
@@ -812,9 +871,13 @@ Face? _pickPrintedFace(List<Face> faces, Size frame) {
     if (fracW < 0.02 || fracW > 0.55) return false;
     return true;
   }).toList();
-  final pool = printed.isNotEmpty ? printed : faces;
-  pool.sort((a, b) => a.boundingBox.height.compareTo(b.boundingBox.height));
-  return pool.first;
+  return _largestFace(printed.isNotEmpty ? printed : faces);
+}
+
+Face _largestFace(List<Face> faces) {
+  return faces.reduce(
+    (a, b) => b.boundingBox.height > a.boundingBox.height ? b : a,
+  );
 }
 
 Face? _pickLiveFace(List<Face> faces, Size frame) {
@@ -829,97 +892,33 @@ Face? _pickLiveFace(List<Face> faces, Size frame) {
   return pool.first;
 }
 
-double _faceScore(_FaceSig id, _FaceSig live) {
-  const keys = <FaceLandmarkType>[
-    FaceLandmarkType.noseBase,
-    FaceLandmarkType.bottomMouth,
-    FaceLandmarkType.leftMouth,
-    FaceLandmarkType.rightMouth,
-    FaceLandmarkType.leftCheek,
-    FaceLandmarkType.rightCheek,
-  ];
-  var sum = 0.0;
-  var n = 0;
-  for (final key in keys) {
-    final a = id.points[key];
-    final b = live.points[key];
-    if (a == null || b == null) continue;
-    sum += (a - b).distance;
-    n++;
-  }
-  final landmark = n == 0 ? 1.0 : sum / n;
-  final mouth = (id.mouthOverEyes > 0 && live.mouthOverEyes > 0)
-      ? (id.mouthOverEyes - live.mouthOverEyes).abs()
-      : 0.0;
-  final nose = (id.noseY - live.noseY).abs();
-  final jaw = (id.jawOverEyes > 0 && live.jawOverEyes > 0)
-      ? (id.jawOverEyes - live.jawOverEyes).abs()
-      : 0.0;
-  final aspect = (id.aspect - live.aspect).abs();
-  return landmark * 0.95 + mouth * 0.55 + nose * 0.40 + jaw * 0.25 + aspect * 0.20;
-}
-
-_FaceSig? _faceSig(Face face) {
+/// Null unless both eyes, the nose, and the mouth were found. [path] is the
+/// image the landmarks of [face] refer to.
+_FaceSig? _faceSig(Face face, String path) {
   final box = face.boundingBox;
   if (box.width < 16 || box.height < 18) return null;
-  final left = face.landmarks[FaceLandmarkType.leftEye]?.position;
-  final right = face.landmarks[FaceLandmarkType.rightEye]?.position;
-  if (left == null || right == null) return null;
-
-  final eyeGap = math.sqrt(
-    math.pow(left.x - right.x, 2) + math.pow(left.y - right.y, 2),
-  );
-  if (eyeGap < 8) return null;
-
-  final midX = (left.x + right.x) / 2;
-  final midY = (left.y + right.y) / 2;
-  final angle = math.atan2(
-    (right.y - left.y).toDouble(),
-    (right.x - left.x).toDouble(),
-  );
-  final c = math.cos(-angle);
-  final s = math.sin(-angle);
-
-  Offset? nrm(FaceLandmarkType type) {
+  Offset? at(FaceLandmarkType type) {
     final p = face.landmarks[type]?.position;
-    if (p == null) return null;
-    final dx = p.x - midX;
-    final dy = p.y - midY;
-    return Offset((dx * c - dy * s) / eyeGap, (dx * s + dy * c) / eyeGap);
+    return p == null ? null : Offset(p.x.toDouble(), p.y.toDouble());
   }
 
-  final points = <FaceLandmarkType, Offset>{};
-  for (final type in FaceLandmarkType.values) {
-    final p = nrm(type);
-    if (p != null) points[type] = p;
+  final left = at(FaceLandmarkType.leftEye);
+  final right = at(FaceLandmarkType.rightEye);
+  if (left == null || right == null || (left - right).distance < 8) {
+    return null;
   }
-  final nose = points[FaceLandmarkType.noseBase];
-  final mouth = points[FaceLandmarkType.bottomMouth];
-  if (nose == null || mouth == null) return null;
-
-  var mouthWidth = 0.0;
-  final lm = points[FaceLandmarkType.leftMouth];
-  final rm = points[FaceLandmarkType.rightMouth];
-  if (lm != null && rm != null) {
-    mouthWidth = (lm - rm).distance;
+  if (at(FaceLandmarkType.noseBase) == null ||
+      at(FaceLandmarkType.bottomMouth) == null) {
+    return null;
   }
-
-  var jaw = 0.0;
-  final oval = face.contours[FaceContourType.face]?.points;
-  if (oval != null && oval.length >= 8) {
-    final xs = oval.map((p) => p.x.toDouble()).toList();
-    jaw = (xs.reduce(math.max) - xs.reduce(math.min)) / eyeGap;
-  }
-
-  return _FaceSig(
-    points: points,
-    mouthOverEyes: mouthWidth,
-    noseY: nose.dy,
-    jawOverEyes: jaw,
-    aspect: box.width / box.height,
-    yaw: face.headEulerAngleY ?? 0,
-    roll: face.headEulerAngleZ ?? 0,
+  final warp = FaceWarp.forFace(
+    eyeA: left,
+    eyeB: right,
+    mouthA: at(FaceLandmarkType.leftMouth),
+    mouthB: at(FaceLandmarkType.rightMouth),
   );
+  if (warp == null) return null;
+  return _FaceSig(path: path, warp: warp, yaw: face.headEulerAngleY ?? 0);
 }
 
 Future<Size> _fileImageSize(String path) async {

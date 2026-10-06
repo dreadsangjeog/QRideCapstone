@@ -23,7 +23,17 @@ enum _Pose { front, turn, center }
 enum _Stage { fit, steady, blink, snap }
 
 /// Why the face is not usable yet.
-enum _Fit { noFace, tooDark, tooFar, tooClose, offCenter, needTurn, needLive, good }
+enum _Fit {
+  noFace,
+  tooDark,
+  tooFar,
+  tooClose,
+  offCenter,
+  needTurn,
+  needLevel,
+  needLive,
+  good,
+}
 
 class _Sample {
   const _Sample(this.cx, this.cy, this.h, this.yaw);
@@ -54,6 +64,11 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
   static const _turnDeg = 14.0;
   /// Minimum sweep from the forward pose so a pre-angled still photo fails.
   static const _turnSweep = 12.0;
+  /// Largest side turn for the saved photo. The ID match rejects more than
+  /// 18°, and the head can drift while the camera focuses.
+  static const _captureYawDeg = 12.0;
+  /// Largest up or down tilt for the saved photo. ID photos are level.
+  static const _capturePitchDeg = 20.0;
   /// Mean Y-plane luma (0–255) below this → scene is too dark for reliable detect.
   static const _darkLuma = 42.0;
   /// Eye-open swing needed to count a blink. ML Kit often reports a narrow
@@ -100,6 +115,7 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
   bool _sceneDark = false;
   bool _briefing = true;
   double _lastLuma = 128;
+  bool _exposureBoosted = false;
   DateTime _lastExposureAdjust = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
@@ -228,19 +244,22 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
   Future<void> _nudgeExposure(bool dark) async {
     final cam = _controller;
     if (cam == null || !cam.value.isInitialized) return;
+    final boost = dark || (_exposureBoosted && _lastLuma <= _darkLuma + 25);
+    if (boost == _exposureBoosted) return;
     final now = DateTime.now();
     if (now.difference(_lastExposureAdjust) < const Duration(seconds: 2)) {
       return;
     }
     _lastExposureAdjust = now;
     try {
-      final max = await cam.getMaxExposureOffset();
-      final min = await cam.getMinExposureOffset();
-      if (dark) {
+      if (boost) {
+        final max = await cam.getMaxExposureOffset();
+        final min = await cam.getMinExposureOffset();
         await cam.setExposureOffset(math.min(max, math.max(min, 1.5)));
-      } else if (_lastLuma > _darkLuma + 25) {
+      } else {
         await cam.setExposureOffset(0);
       }
+      _exposureBoosted = boost;
     } catch (_) {
       // Not all devices expose exposure offsets for the front camera.
     }
@@ -276,8 +295,12 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
     }
     switch (_pose) {
       case _Pose.front:
-      case _Pose.center:
         if (yaw.abs() > 22) return _Fit.needTurn;
+      case _Pose.center:
+        if (yaw.abs() > _captureYawDeg) return _Fit.needTurn;
+        if ((face.headEulerAngleX ?? 0).abs() > _capturePitchDeg) {
+          return _Fit.needLevel;
+        }
       case _Pose.turn:
         if (_turnLeft ? yaw < _turnDeg : yaw > -_turnDeg) {
           return _Fit.needTurn;
@@ -663,6 +686,8 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
               : 'Turn your head to the right',
           _Pose.center => 'Look back at the camera',
         };
+      case _Fit.needLevel:
+        return 'Hold the phone at eye level';
       case _Fit.good:
         return _stage == _Stage.steady ? 'Stay put' : 'Hold still';
     }
@@ -697,6 +722,8 @@ class _KycLivenessScreenState extends State<KycLivenessScreen> {
               : 'Slowly turn so your right ear moves toward the camera. We need to see the head move.',
           _Pose.center => 'Face the camera again. The live photo is taken next.',
         };
+      case _Fit.needLevel:
+        return 'Keep your chin level and look straight into the camera, like an ID photo.';
       case _Fit.good:
         return switch (_pose) {
           _Pose.front => 'Keep steady — then blink when asked.',
@@ -1014,7 +1041,7 @@ class _Briefing extends StatelessWidget {
           const _BriefRow(
             icon: Icons.photo_camera_outlined,
             title: 'One live photo',
-            body: 'Look back at the camera. We keep that selfie for the ID match.',
+            body: 'Hold the phone at eye level and look straight at it, like an ID photo. We keep that selfie for the ID match.',
           ),
           const Spacer(),
           FilledButton(

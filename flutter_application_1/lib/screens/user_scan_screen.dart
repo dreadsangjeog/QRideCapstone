@@ -197,7 +197,15 @@ class _UserScanScreenState extends State<UserScanScreen>
       }
       if (pending != null) {
         _pendingBike = null;
-        await _startRentalIfAvailable(pending);
+        try {
+          await _startRentalIfAvailable(pending);
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(friendlyNetworkError(e))),
+          );
+          await _restartScannerIfNeeded();
+        }
       }
       return;
     }

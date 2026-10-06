@@ -56,7 +56,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (index == 3 && _profileTabSeen != 3) {
       _profileTabSeen = index;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_loadProfile());
+        if (mounted) unawaited(_loadProfile(keepEdits: true));
       });
     } else {
       _profileTabSeen = index;
@@ -72,18 +72,31 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     });
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile({bool keepEdits = false}) async {
     try {
       final profile = await _kyc.fetchMine();
       if (!mounted) return;
-      _firstName.text = profile.firstName ?? '';
-      _middleName.text = profile.middleName ?? '';
-      _lastName.text = profile.lastName ?? '';
-      _birthdate.text = (profile.birthdate ?? '').length >= 10
-          ? profile.birthdate!.substring(0, 10)
-          : (profile.birthdate ?? '');
+      if (!keepEdits || profile.personalDetailsLocked || !_hasUnsavedName()) {
+        _firstName.text = profile.firstName ?? '';
+        _middleName.text = profile.middleName ?? '';
+        _lastName.text = profile.lastName ?? '';
+        _birthdate.text = _birthdateText(profile);
+      }
       setState(() => _profile = profile);
     } catch (_) {}
+  }
+
+  bool _hasUnsavedName() {
+    final saved = _profile;
+    return _firstName.text != (saved?.firstName ?? '') ||
+        _middleName.text != (saved?.middleName ?? '') ||
+        _lastName.text != (saved?.lastName ?? '') ||
+        _birthdate.text != _birthdateText(saved);
+  }
+
+  static String _birthdateText(KycProfile? profile) {
+    final birthdate = profile?.birthdate ?? '';
+    return birthdate.length >= 10 ? birthdate.substring(0, 10) : birthdate;
   }
 
   Future<void> _saveName() async {
@@ -261,39 +274,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 ),
               ),
               const SizedBox(height: 18),
-              _LegalNameCard(
-                formKey: _nameFormKey,
-                firstName: _firstName,
-                middleName: _middleName,
-                lastName: _lastName,
-                birthdate: _birthdate,
-                locked: detailsLocked,
-                lockedNote: live == null
-                    ? 'Loading your details.'
-                    : live.isVerified
-                        ? 'Saved from your ID check. These details cannot be changed.'
-                        : 'Submitted with your ID. These details stay as staff review them.',
-                saving: _savingName,
-                onSave: _saveName,
-              ),
-              if (live != null && live.isPending) ...[
-                const SizedBox(height: 12),
-                const _WaitingReviewNotice(),
-              ] else if (showContinue) ...[
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () async {
-                    final kyc = KycScope.maybeOf(context);
-                    if (kyc != null && kyc.profile.needsAction) {
-                      await kyc.openWizard(context);
-                      await _loadProfile();
-                    }
-                  },
-                  icon: const Icon(Icons.verified_user_outlined),
-                  label: const Text('Continue ID verification'),
-                ),
-              ],
-              const SizedBox(height: 28),
               const PortalSectionLabel('Settings'),
               PolishedSectionCard(
                 child: Column(
@@ -404,6 +384,39 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: 18),
+              _LegalNameCard(
+                formKey: _nameFormKey,
+                firstName: _firstName,
+                middleName: _middleName,
+                lastName: _lastName,
+                birthdate: _birthdate,
+                locked: detailsLocked,
+                lockedNote: live == null
+                    ? 'Loading your details.'
+                    : live.isVerified
+                        ? 'Saved from your ID check. These details cannot be changed.'
+                        : 'Submitted with your ID. These details stay as staff review them.',
+                saving: _savingName,
+                onSave: _saveName,
+              ),
+              if (live != null && live.isPending) ...[
+                const SizedBox(height: 12),
+                const _WaitingReviewNotice(),
+              ] else if (showContinue) ...[
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final kyc = KycScope.maybeOf(context);
+                    if (kyc != null && kyc.profile.needsAction) {
+                      await kyc.openWizard(context);
+                      await _loadProfile();
+                    }
+                  },
+                  icon: const Icon(Icons.verified_user_outlined),
+                  label: const Text('Continue ID verification'),
+                ),
+              ],
               if (_adminResolved && _isAdmin) ...[
                 const SizedBox(height: 24),
                 const PortalSectionLabel('Administration'),
@@ -628,6 +641,7 @@ class _LegalNameCard extends StatelessWidget {
                               firstDate: DateTime(1920),
                               lastDate: DateTime(now.year, now.month, now.day)
                                   .subtract(const Duration(days: 1)),
+                              startWithYear: birthdate.text.isEmpty,
                             );
                             if (picked == null) return;
                             final m = picked.month.toString().padLeft(2, '0');

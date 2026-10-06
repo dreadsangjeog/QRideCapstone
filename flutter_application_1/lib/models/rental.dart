@@ -23,7 +23,7 @@ class Rental {
   final DateTime startedAt;   // When user submitted the request.
   final DateTime? endedAt;
   final DateTime? approvedAt; // When admin approved — countdown starts here.
-  /// 'pending' | 'active' | 'ended' | 'rejected'
+  /// 'pending' | 'active' | 'ended' | 'rejected' | 'cancelled'
   final String status;
   final int plannedMinutes;
   final double ratePerHour;
@@ -38,6 +38,7 @@ class Rental {
   bool get isActive   => status == 'active';
   bool get isEnded    => status == 'ended';
   bool get isRejected => status == 'rejected';
+  bool get isCancelled => status == 'cancelled';
 
   /// End time based on approved_at + planned duration.
   DateTime? get scheduledEndTime =>

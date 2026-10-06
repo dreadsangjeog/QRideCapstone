@@ -157,12 +157,21 @@ class AnalyticsRepository {
         'planned_minutes, rate_per_hour, actual_cost, estimated_cost, penalty_fee, '
         'bikes(code, label)';
 
-    Future<dynamic> load(String select) {
-      return SupabaseClientProvider.client
-          .from('rentals')
-          .select(select)
-          .or('ended_at.gte."$fromIso",status.eq.pending,status.eq.active')
-          .order('ended_at', nullsFirst: false);
+    // The API returns at most 1000 rows per request, so read in pages.
+    Future<List<dynamic>> load(String select) async {
+      const page = 1000;
+      final all = <dynamic>[];
+      for (var from = 0;; from += page) {
+        final rows = await SupabaseClientProvider.client
+            .from('rentals')
+            .select(select)
+            .or('ended_at.gte."$fromIso",status.eq.pending,status.eq.active')
+            .order('ended_at', nullsFirst: false)
+            .order('id')
+            .range(from, from + page - 1);
+        all.addAll(rows);
+        if (rows.length < page) return all;
+      }
     }
 
     dynamic raw;
@@ -184,11 +193,14 @@ class AnalyticsRepository {
       if (id != null && id.isNotEmpty) profileIds.add(id);
     }
     final profilesById = <String, Map<String, dynamic>>{};
-    if (profileIds.isNotEmpty) {
+    // Each id goes in the request URL, so look them up in small batches.
+    final ids = profileIds.toList();
+    for (var i = 0; i < ids.length; i += 100) {
+      final end = i + 100 < ids.length ? i + 100 : ids.length;
       final profiles = await SupabaseClientProvider.client
           .from('profiles')
           .select('id, username, first_name, middle_name, last_name')
-          .inFilter('id', profileIds.toList());
+          .inFilter('id', ids.sublist(i, end));
       for (final item in profiles as List<dynamic>) {
         if (item is! Map) continue;
         final map = Map<String, dynamic>.from(item);

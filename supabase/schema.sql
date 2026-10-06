@@ -302,18 +302,16 @@ create policy "rentals_select_own_or_admin"
   to authenticated
   using (user_id = auth.uid() or public.is_admin());
 
+-- Riders create and change rentals only through the rental functions.
 drop policy if exists "rentals_insert_own" on public.rentals;
-create policy "rentals_insert_own"
-  on public.rentals for insert
-  to authenticated
-  with check (user_id = auth.uid());
-
 drop policy if exists "rentals_update_own_or_admin" on public.rentals;
-create policy "rentals_update_own_or_admin"
+
+drop policy if exists "rentals_update_admin" on public.rentals;
+create policy "rentals_update_admin"
   on public.rentals for update
   to authenticated
-  using (user_id = auth.uid() or public.is_admin())
-  with check (user_id = auth.uid() or public.is_admin());
+  using (public.is_admin())
+  with check (public.is_admin());
 
 -- rental_locations: insert only for own active rental; read own or admin
 drop policy if exists "rental_locations_select" on public.rental_locations;

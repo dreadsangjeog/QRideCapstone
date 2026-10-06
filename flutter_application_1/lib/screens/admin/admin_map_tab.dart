@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -9,7 +10,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/admin_repository.dart';
 import '../../services/notification_repository.dart';
-import '../../services/notification_service.dart';
 import '../../services/supabase_client.dart';
 import '../../widgets/heading_map_pin.dart';
 import '../../widgets/qride_glass.dart';
@@ -37,6 +37,9 @@ class _AdminMapTabState extends State<AdminMapTab> {
 
   List<_MarkerRow> _riders = [];
   final Map<String, SmoothLatLng> _poses = {};
+
+  /// A one-off GPS hop. Shown only if the next fix stays there.
+  final Map<String, LatLng> _jumpHold = {};
   /// Last stable pin signal per rental — used for yellow/red hysteresis.
   final Map<String, _RiderSignal> _signalByRental = {};
 
@@ -53,6 +56,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
   RealtimeChannel? _locationChannel;
   final Set<String> _offlineNotified = {};
   final _notifRepo = NotificationRepository();
+  final _offlineJitter = math.Random();
 
   bool _mapReady = false;
   bool _panelOpen = true;
@@ -193,6 +197,39 @@ class _AdminMapTabState extends State<AdminMapTab> {
     }
   }
 
+  /// Ignores a single hop onto a nearby street. The next fix has to stay
+  /// there before the pin follows. A reading that comes back is kept.
+  void _moveRiderPin(SmoothLatLng pose, _MarkerRow row) {
+    const glideM = 28.0;
+    const confirmM = 30.0;
+    final next = LatLng(row.lat, row.lng);
+    final moved = Geolocator.distanceBetween(
+      pose.target.latitude,
+      pose.target.longitude,
+      next.latitude,
+      next.longitude,
+    );
+    if (moved <= glideM) {
+      _jumpHold.remove(row.rentalId);
+      pose.setTarget(next, row.heading);
+      return;
+    }
+    final held = _jumpHold[row.rentalId];
+    if (held != null &&
+        Geolocator.distanceBetween(
+              held.latitude,
+              held.longitude,
+              next.latitude,
+              next.longitude,
+            ) <=
+            confirmM) {
+      _jumpHold.remove(row.rentalId);
+      pose.setTarget(next, row.heading);
+      return;
+    }
+    _jumpHold[row.rentalId] = next;
+  }
+
   /// Drops out-of-order snapshots. A newer `recorded_at` moves the pin and
   /// resets the live/yellow clock; an older one is ignored.
   List<_MarkerRow> _mergeFresher(List<_MarkerRow> parsed) {
@@ -243,7 +280,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
         row.rentalId,
         () => SmoothLatLng(LatLng(row.lat, row.lng)),
       );
-      pose.setTarget(LatLng(row.lat, row.lng), row.heading);
+      _moveRiderPin(pose, row);
     }
     return merged;
   }
@@ -255,30 +292,42 @@ class _AdminMapTabState extends State<AdminMapTab> {
         continue;
       }
       if (!_offlineNotified.add(r.rentalId)) continue;
+      unawaited(_reportOffline(r.rentalId));
+    }
+  }
+
+  /// Every open admin screen sees the same rider go quiet. A random delay
+  /// spreads them out; the first to report notifies all admins, and the rest
+  /// find that row and stay quiet. The banner comes from the inbox row.
+  Future<void> _reportOffline(String rentalId) async {
+    try {
+      await Future<void>.delayed(
+        Duration(milliseconds: _offlineJitter.nextInt(6000)),
+      );
+      if (!mounted) return;
+      _MarkerRow? rider;
+      for (final r in _riders) {
+        if (r.rentalId == rentalId) rider = r;
+      }
+      if (rider == null || _signalFor(rider) != _RiderSignal.lost) return;
+      final since = rider.recordedAt ??
+          DateTime.now().subtract(const Duration(minutes: 10));
+      final reported = await _notifRepo.hasMineSince(
+        type: 'rider_offline',
+        rentalId: rentalId,
+        since: since,
+      );
+      if (reported) return;
       final body =
-          '${r.username} on ${r.bikeLabel} has not sent a GPS update for ${_MarkerRow._formatAge(r.age ?? Duration.zero)}. Last point is still on the map.';
-      unawaited(
-        _notifRepo.notifyAdmins(
-          type: 'rider_offline',
-          title: 'Rider location not updating',
-          body: body,
-          data: {'rental_id': r.rentalId, 'username': r.username},
-        ),
+          '${rider.username} on ${rider.bikeLabel} has not sent a GPS update for ${_MarkerRow._formatAge(rider.age ?? Duration.zero)}. Last point is still on the map.';
+      await _notifRepo.notifyAdmins(
+        type: 'rider_offline',
+        title: 'Rider location not updating',
+        body: body,
+        data: {'rental_id': rentalId, 'username': rider.username},
       );
-      unawaited(
-        NotificationService.showInboxBanner(
-          AppNotification(
-            id: 'local-offline-${r.rentalId}',
-            userId: '',
-            roleScope: 'admin',
-            type: 'rider_offline',
-            title: 'Rider location not updating',
-            body: body,
-            data: const {},
-            createdAt: DateTime.now().toUtc(),
-          ),
-        ),
-      );
+    } catch (e) {
+      debugPrint('[AdminMap] offline alert failed: $e');
     }
   }
 
@@ -435,7 +484,7 @@ class _AdminMapTabState extends State<AdminMapTab> {
             },
           ),
           children: [
-            qrideStreetTiles(),
+            ...qrideStreetTiles(),
             CircleLayer(circles: adminCircles),
             MarkerLayer(markers: riderMarkers),
             MarkerLayer(markers: adminMarkers),

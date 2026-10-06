@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:html' as html;
 import 'dart:typed_data';
 
@@ -12,5 +13,11 @@ Future<void> saveBytesFile({
   html.AnchorElement(href: url)
     ..setAttribute('download', filename)
     ..click();
-  html.Url.revokeObjectUrl(url);
+  // Safari cancels the download if the URL is revoked before it starts.
+  unawaited(
+    Future<void>.delayed(
+      const Duration(seconds: 30),
+      () => html.Url.revokeObjectUrl(url),
+    ),
+  );
 }

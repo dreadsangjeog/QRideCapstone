@@ -54,6 +54,7 @@ dependencies:
   connectivity_plus: ^7.3.1
   shared_preferences: ^2.5.3
   excel: ^4.0.6
+  tflite_flutter: ^0.12.1
 
 dev_dependencies:
   flutter_test:
@@ -80,6 +81,7 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/models/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

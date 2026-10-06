@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,6 +10,7 @@ import '../models/rental.dart';
 import '../services/device_compass.dart';
 import '../services/location_tracking_service.dart';
 import '../services/rental_repository.dart';
+import '../services/ride_foreground_task.dart';
 import '../services/ride_location_controller.dart';
 import '../utils/location_access.dart';
 import '../theme/brand.dart';
@@ -51,6 +53,25 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   bool _extending = false;
   String? _locationHint;
   bool _waitingLocationSettings = false;
+  bool _startingLocal = false;
+
+  /// The next live fix is shown where it is. Easing from the placeholder,
+  /// or from a point left on screen through a long lock, is the slide
+  /// across the map when QRide opens.
+  bool _snapNextFix = true;
+
+  /// GPS wanders for a few seconds after the app opens, then settles.
+  /// During that window a loose reading cannot walk the pin around.
+  DateTime? _gpsOpenedAt;
+  bool _pinLocked = false;
+  LatLng? _settleHold;
+
+  /// Local GPS stays off until this is true, so it cannot start beside the
+  /// rental listener while the first ride check is still in flight.
+  bool _rentalChecked = false;
+
+  /// The location prompt is shown once, after we know there is no active ride.
+  bool _askedLocation = false;
 
   /// During a rental, prefer the shared tracker (same coords admin receives).
   /// [isTracking] flips as soon as the ride writer starts, before the rental
@@ -61,7 +82,6 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_askLocationThenStart());
     _startCompass();
     _checkRental();
     _rentalPoll = Timer.periodic(const Duration(seconds: 8), (_) {
@@ -72,9 +92,15 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
         unawaited(_posSub?.cancel());
         _posSub = null;
       }
-      if (!_pose.tick() && !_hasActiveRide) return;
+      final moving = _pose.tick();
+      final now = DateTime.now();
+      // The ride card countdown only needs a new frame each second.
+      final newSecond = _hasActiveRide &&
+          now.millisecondsSinceEpoch ~/ 1000 !=
+              _now.millisecondsSinceEpoch ~/ 1000;
+      if (!moving && !newSecond) return;
       if (!mounted) return;
-      if (_hasActiveRide) _now = DateTime.now();
+      if (_hasActiveRide) _now = now;
       setState(() {});
       if (_follow && _mapReady) {
         try {
@@ -107,12 +133,20 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
     final pos = _rentalTracking?.position.value;
     if (pos == null) return;
     final hdg = _rentalTracking?.heading.value;
+    if (!_showFix(
+      LatLng(pos.latitude, pos.longitude),
+      hdg,
+      pos.timestamp,
+      pos.accuracy,
+    )) {
+      return;
+    }
     _position = pos;
-    _pose.setTarget(LatLng(pos.latitude, pos.longitude), hdg);
     if (mounted) setState(() => _locationHint = null);
   }
 
   Future<void> _checkRental() async {
+    var failed = false;
     try {
       final rental = await _rentalRepo.fetchMyActiveRental();
       final active = rental != null && rental.isActive;
@@ -122,35 +156,80 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
           rental?.plannedMinutes == _rental?.plannedMinutes &&
           rental?.approvedAt == _rental?.approvedAt &&
           rental?.status == _rental?.status;
-      if (active == _hasActiveRide && pending == _hasPendingRide && sameRide) {
-        await _syncLocalStreamMode();
-        return;
+      final local = _rental;
+      // A poll that started before Extend time finished still has the old
+      // duration. Don't put that shorter booking back on the card.
+      final keepLongerPlan = rental != null &&
+          local != null &&
+          rental.id == local.id &&
+          rental.plannedMinutes < local.plannedMinutes;
+      final unchanged =
+          active == _hasActiveRide && pending == _hasPendingRide && sameRide;
+      if (!keepLongerPlan && !unchanged) {
+        setState(() {
+          _hasActiveRide = active;
+          _hasPendingRide = pending;
+          _rental = rental;
+        });
+        if (active) _onRentalTrackingUpdate();
       }
-      setState(() {
-        _hasActiveRide = active;
-        _hasPendingRide = pending;
-        _rental = rental;
-      });
-      if (active) _onRentalTrackingUpdate();
-      await _syncLocalStreamMode();
-    } catch (_) {}
+    } catch (_) {
+      failed = true;
+    }
+    if (!mounted) return;
+    if (failed) {
+      if (_hasActiveRide ||
+          _useRentalTracker ||
+          await _rentalGpsOwnsLocation()) {
+        await _posSub?.cancel();
+        _posSub = null;
+      }
+      return;
+    }
+    _rentalChecked = true;
+    await _syncLocalStreamMode();
   }
 
   /// One GPS consumer on the phone: rental tracker while riding, else local.
   Future<void> _syncLocalStreamMode() async {
-    if (_useRentalTracker) {
+    final serviceOwns = await _rentalGpsOwnsLocation();
+    if (!_rentalChecked &&
+        !_hasActiveRide &&
+        !_useRentalTracker &&
+        !serviceOwns) {
+      return;
+    }
+    if (_hasActiveRide || _useRentalTracker || serviceOwns) {
       await _posSub?.cancel();
       _posSub = null;
-      _onRentalTrackingUpdate();
+      if (_useRentalTracker || _hasActiveRide) _onRentalTrackingUpdate();
+      return;
+    }
+    if (!_askedLocation) {
+      _askedLocation = true;
+      await _askLocationThenStart();
       return;
     }
     await _startLocalLocation();
   }
 
+  /// True while the rental service is the phone's location client.
+  Future<bool> _rentalGpsOwnsLocation() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    return RideForegroundTask.isRunning;
+  }
+
   Future<void> _startLocalLocation() async {
-    if (_useRentalTracker) return;
+    if (_hasActiveRide || _useRentalTracker || _startingLocal) return;
+    if (await _rentalGpsOwnsLocation()) return;
+    _startingLocal = true;
     try {
       if (!await hasLocationAccessForRental()) return;
+      if (_hasActiveRide || _useRentalTracker || await _rentalGpsOwnsLocation()) {
+        return;
+      }
       if (_posSub != null) {
         if (mounted) setState(() => _locationHint = null);
         return;
@@ -160,9 +239,13 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
       final first = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 8),
         ),
       );
-      if (_useRentalTracker) return;
+      if (_hasActiveRide || _useRentalTracker || !mounted || _posSub != null) {
+        return;
+      }
+      if (await _rentalGpsOwnsLocation()) return;
       _applyPosition(first);
 
       _posSub = Geolocator.getPositionStream(
@@ -171,11 +254,13 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
           distanceFilter: 0,
         ),
       ).listen((pos) {
-        if (_useRentalTracker) return;
+        if (_hasActiveRide || _useRentalTracker) return;
         _applyPosition(pos);
       });
     } catch (_) {
       if (mounted) setState(() => _locationHint = 'Could not read GPS');
+    } finally {
+      _startingLocal = false;
     }
   }
 
@@ -225,51 +310,160 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
   }
 
   Future<void> _extendFromHome(Rental rental) async {
+    final history = await _rentalRepo.fetchRateHistory();
+    if (!mounted) return;
     final extra = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => ExtendTimeSheet(
         currentPlannedMinutes: rental.plannedMinutes,
         ratePerHour: rental.ratePerHour,
+        approvedAt: rental.approvedAt,
+        history: history,
       ),
     );
     if (extra == null || !mounted) return;
     setState(() => _extending = true);
     try {
-      await _rentalRepo.extendRental(rentalId: rental.id, extraMinutes: extra);
-      final refreshed = await _rentalRepo.fetchRentalById(rental.id);
+      final refreshed = await _rentalRepo.extendRental(
+        rentalId: rental.id,
+        extraMinutes: extra,
+      );
       if (!mounted) return;
       setState(() {
-        _rental = refreshed ?? rental;
-        _hasActiveRide = (_rental?.isActive ?? false);
+        _rental = refreshed;
+        _hasActiveRide = refreshed.isActive;
         _extending = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _extending = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(extendErrorText(e))));
     }
   }
 
   void _applyPosition(Position pos) {
-    _position = pos;
     final gpsHeading = pos.heading >= 0 && pos.heading <= 360
         ? pos.heading
         : null;
-    _pose.setTarget(LatLng(pos.latitude, pos.longitude), gpsHeading);
+    if (!_showFix(
+      LatLng(pos.latitude, pos.longitude),
+      gpsHeading,
+      pos.timestamp,
+      pos.accuracy,
+    )) {
+      return;
+    }
+    _position = pos;
     if (mounted) setState(() {});
+  }
+
+  /// Shows [next] on the map. The first live fix after open or resume
+  /// appears there immediately. While the chip is still locking, later
+  /// readings have to be tight or repeat before the pin moves. After that,
+  /// a shift under 5 meters stays put.
+  bool _showFix(LatLng next, double? heading, DateTime at, double accuracy) {
+    final age = DateTime.now().toUtc().difference(at.toUtc());
+    final live = age.isNegative || age <= const Duration(seconds: 20);
+    if (!live) return false;
+    if (_snapNextFix) {
+      if (accuracy > 80) return false;
+      _pose.snapTo(next, heading);
+      _snapNextFix = false;
+      _gpsOpenedAt = DateTime.now();
+      _pinLocked = accuracy > 0 && accuracy <= 12;
+      _settleHold = null;
+      if (_follow && _mapReady) {
+        try {
+          _map.move(next, _map.camera.zoom);
+        } catch (_) {
+          _map.move(next, 16);
+        }
+      }
+      return true;
+    }
+
+    final moved = Geolocator.distanceBetween(
+      _pose.target.latitude,
+      _pose.target.longitude,
+      next.latitude,
+      next.longitude,
+    );
+    final warming = _gpsOpenedAt != null &&
+        DateTime.now().difference(_gpsOpenedAt!) < const Duration(seconds: 20);
+
+    if (warming && !_pinLocked) {
+      if (accuracy > 0 && accuracy <= 12) {
+        _pose.snapTo(next, heading);
+        _pinLocked = true;
+        _settleHold = null;
+        return true;
+      }
+      _keepHeading(heading);
+      return false;
+    }
+
+    if (moved < 5 || accuracy > 30) {
+      _keepHeading(heading);
+      return false;
+    }
+
+    if (warming) {
+      final held = _settleHold;
+      if (held == null ||
+          Geolocator.distanceBetween(
+                held.latitude,
+                held.longitude,
+                next.latitude,
+                next.longitude,
+              ) >
+              12) {
+        _settleHold = next;
+        _keepHeading(heading);
+        return false;
+      }
+      _settleHold = null;
+      _pinLocked = true;
+      _pose.snapTo(next, heading);
+      return true;
+    }
+
+    _pose.setTarget(next, heading);
+    return true;
+  }
+
+  void _keepHeading(double? heading) {
+    if (heading == null || heading < 0 || heading > 360) return;
+    _pose.setTarget(_pose.target, heading);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_askLocationThenStart(fromResume: true));
+      _snapNextFix = true;
+      _pinLocked = false;
+      _settleHold = null;
+      _gpsOpenedAt = null;
+      if (_hasActiveRide || _useRentalTracker) {
+        unawaited(_posSub?.cancel());
+        _posSub = null;
+        _onRentalTrackingUpdate();
+        return;
+      }
+      unawaited(_checkRental());
     }
   }
 
   Future<void> _askLocationThenStart({bool fromResume = false}) async {
     if (!mounted) return;
-    if (_useRentalTracker) {
-      await _syncLocalStreamMode();
+    // A second location client, opened when QRide comes back from a long
+    // lock, stalls the rental GPS until both are stuck.
+    if (_hasActiveRide || _useRentalTracker || await _rentalGpsOwnsLocation()) {
+      await _posSub?.cancel();
+      _posSub = null;
+      if (_hasActiveRide || _useRentalTracker) _onRentalTrackingUpdate();
       return;
     }
     if (await hasLocationAccessForRental()) {
@@ -319,7 +513,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
         initialZoom: 16,
         onMapReady: () {
           _mapReady = true;
-          if (_follow) _map.move(shown, 16);
+          if (_follow && !_snapNextFix) _map.move(_pose.current, 16);
         },
         onPositionChanged: (camera, hasGesture) {
           if (hasGesture && _follow) setState(() => _follow = false);
@@ -329,7 +523,7 @@ class _UserHomeMapScreenState extends State<UserHomeMapScreen>
         ),
       ),
       children: [
-        qrideStreetTiles(),
+        ...qrideStreetTiles(),
         if (pos != null &&
             pos.accuracy.isFinite &&
             pos.accuracy > 0 &&
@@ -520,8 +714,14 @@ class _ActiveRideCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: FilledButton.tonal(
-                onPressed: extending ? null : onExtend,
-                child: Text(extending ? 'Extending…' : 'Extend time'),
+                onPressed: extending || overtime ? null : onExtend,
+                child: Text(
+                  overtime
+                      ? 'Time is up. Return the bike'
+                      : extending
+                          ? 'Extending…'
+                          : 'Extend time',
+                ),
               ),
             ),
           ],

@@ -12,7 +12,7 @@ class _RequestCard extends StatelessWidget {
   });
 
   final RentalWithBike row;
-  final VoidCallback onApprove;
+  final VoidCallback? onApprove;
 
   @override
   Widget build(BuildContext context) {
@@ -130,7 +130,7 @@ class _RequestCard extends StatelessWidget {
               ),
               onPressed: onApprove,
               icon: const Icon(Icons.check_rounded, size: 18),
-              label: const Text('Accept'),
+              label: Text(onApprove == null ? 'Accepting…' : 'Accept'),
             ),
           ],
         ),

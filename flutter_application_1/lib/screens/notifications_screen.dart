@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
+import 'notification_settings_screen.dart';
 
 /// Long-lived inbox listener + unread badge for rider or admin shells.
 class NotificationInboxController extends ChangeNotifier {
@@ -16,18 +17,22 @@ class NotificationInboxController extends ChangeNotifier {
   RealtimeChannel? _channel;
   int unread = 0;
   bool _started = false;
+  bool _disposed = false;
 
   Future<void> start() async {
     if (_started) return;
     _started = true;
     await refreshUnread();
+    if (_disposed || !_started) return;
     _channel?.unsubscribe();
     _channel = _repo.subscribeMine(onInsert: _onInsert);
   }
 
   Future<void> refreshUnread() async {
     try {
-      unread = await _repo.unreadCount();
+      final count = await _repo.unreadCount();
+      if (_disposed) return;
+      unread = count;
       notifyListeners();
     } catch (e) {
       debugPrint('notification unread failed: $e');
@@ -35,6 +40,7 @@ class NotificationInboxController extends ChangeNotifier {
   }
 
   void _onInsert(AppNotification n) {
+    if (_disposed) return;
     unread += 1;
     notifyListeners();
     if (n.type == 'rental_five_min' || n.type == 'rental_overtime') {
@@ -52,7 +58,9 @@ class NotificationInboxController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _channel?.unsubscribe();
+    _channel = null;
     super.dispose();
   }
 }
@@ -225,18 +233,40 @@ class _NotificationsInboxPanelState extends State<NotificationsInboxPanel> {
           padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
           child: Row(
             children: [
-              Text(
-                'Notifications',
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w800),
+              Expanded(
+                child: Text(
+                  'Notifications',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
               ),
-              const Spacer(),
               TextButton(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
                 onPressed: _markAll,
                 child: const Text('Mark all read'),
               ),
               IconButton(
+                tooltip: 'Notification settings',
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  final nav = Navigator.of(context, rootNavigator: true);
+                  nav.pop();
+                  nav.push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const NotificationSettingsScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.settings_rounded),
+              ),
+              IconButton(
                 tooltip: 'Close',
+                visualDensity: VisualDensity.compact,
                 onPressed: widget.onClose,
                 icon: const Icon(Icons.close_rounded),
               ),

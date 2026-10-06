@@ -58,12 +58,55 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
     final result = await widget.work;
     if (!mounted) return;
     _scan.stop();
+    _pulse.stop();
     setState(() {
       _step = 3;
       _outcome = result;
     });
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    final verdict = result.faceVerdict;
+    await Future<void>.delayed(
+      Duration(milliseconds: verdict == KycFaceVerdict.match ? 1500 : 2400),
+    );
     if (mounted) widget.onFinished(result);
+  }
+
+  String _title(KycAutoMatchResult? result) {
+    if (result == null) return 'Matching faces';
+    return switch ((result.faceVerdict, result.unreadable)) {
+      (KycFaceVerdict.match, _) => 'Faces match',
+      (KycFaceVerdict.unsure, _) => 'Sent to staff',
+      (KycFaceVerdict.mismatch, _) => 'Faces did not match',
+      (_, KycFaceStep.idPhoto) => 'ID photo not clear',
+      (_, KycFaceStep.liveSelfie) => 'Selfie not clear',
+      _ => 'Could not compare',
+    };
+  }
+
+  /// ID face, live selfie, and same person, once the result is in.
+  List<_Mark> _resultMarks(KycAutoMatchResult result) {
+    return switch ((result.faceVerdict, result.unreadable)) {
+      (KycFaceVerdict.match, _) => const [_Mark.yes, _Mark.yes, _Mark.yes],
+      (KycFaceVerdict.unsure, _) => const [_Mark.yes, _Mark.yes, _Mark.maybe],
+      (KycFaceVerdict.mismatch, _) => const [_Mark.yes, _Mark.yes, _Mark.no],
+      (_, KycFaceStep.idPhoto) => const [_Mark.no, _Mark.skipped, _Mark.skipped],
+      (_, KycFaceStep.liveSelfie) => const [_Mark.yes, _Mark.no, _Mark.skipped],
+      _ => const [_Mark.skipped, _Mark.skipped, _Mark.no],
+    };
+  }
+
+  _Mark _mark(int index) {
+    final result = _outcome;
+    if (result != null) return _resultMarks(result)[index];
+    return _step < index ? _Mark.todo : _Mark.busy;
+  }
+
+  Color? _ring(KycAutoMatchResult? result) {
+    return switch (result?.faceVerdict) {
+      KycFaceVerdict.match => _Mark.yes.color,
+      KycFaceVerdict.unsure => _Mark.maybe.color,
+      KycFaceVerdict.mismatch => _Mark.no.color,
+      null => null,
+    };
   }
 
   @override
@@ -76,6 +119,13 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
   @override
   Widget build(BuildContext context) {
     final result = _outcome;
+    final ring = _ring(result);
+    final samePerson = switch (result?.faceVerdict) {
+      KycFaceVerdict.match => 'Strong match',
+      KycFaceVerdict.unsure => 'Staff will compare',
+      KycFaceVerdict.mismatch => 'No match',
+      null => null,
+    };
     return ColoredBox(
       color: const Color(0xF20B0F14),
       child: SafeArea(
@@ -83,16 +133,16 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
           padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
           child: Column(
             children: [
-              Text(
-                result == null
-                    ? 'Matching faces'
-                    : (result.photoMatch
-                        ? 'Ready for staff'
-                        : 'Faces did not match'),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 24,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: Text(
+                  _title(result),
+                  key: ValueKey(_title(result)),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 24,
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
@@ -112,17 +162,19 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
                       children: [
                         Expanded(
                           child: _photoCard(
-                            label: 'ID photo',
-                            bytes: widget.idPhoto,
+                            label: result?.idFace == null ? 'ID photo' : 'ID face',
+                            bytes: result?.idFace ?? widget.idPhoto,
                             scanning: result == null,
+                            ring: ring,
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: _photoCard(
                             label: 'Live selfie',
-                            bytes: widget.selfie,
+                            bytes: result?.liveFace ?? widget.selfie,
                             scanning: result == null,
+                            ring: ring,
                           ),
                         ),
                       ],
@@ -131,11 +183,11 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
                 ),
               ),
               const SizedBox(height: 20),
-              _row('ID face', _mark(0, result?.photoMatch)),
+              _row('ID face', _mark(0)),
               const SizedBox(height: 8),
-              _row('Live selfie', _mark(1, result?.photoMatch)),
+              _row('Live selfie', _mark(1)),
               const SizedBox(height: 8),
-              _row('Same person', _mark(2, result?.photoMatch)),
+              _row('Same person', _mark(2), detail: samePerson),
             ],
           ),
         ),
@@ -143,16 +195,11 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
     );
   }
 
-  _Mark _mark(int index, bool? ok) {
-    if (_step < index) return _Mark.todo;
-    if (ok == null) return _Mark.busy;
-    return ok ? _Mark.yes : _Mark.no;
-  }
-
   Widget _photoCard({
     required String label,
     required Uint8List bytes,
     required bool scanning,
+    Color? ring,
   }) {
     return Column(
       children: [
@@ -165,17 +212,23 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: DecoratedBox(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: ring ?? Colors.transparent,
+                width: 2,
+              ),
               boxShadow: [
                 BoxShadow(
-                  color: Color.fromRGBO(
-                    10,
-                    132,
-                    255,
-                    scanning ? 0.16 + _pulse.value * 0.20 : 0.06,
-                  ),
+                  color: ring?.withValues(alpha: 0.28) ??
+                      Color.fromRGBO(
+                        10,
+                        132,
+                        255,
+                        scanning ? 0.16 + _pulse.value * 0.20 : 0.06,
+                      ),
                   blurRadius: 22,
                 ),
               ],
@@ -185,7 +238,19 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.memory(bytes, fit: BoxFit.cover),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 420),
+                    layoutBuilder: (current, previous) => Stack(
+                      fit: StackFit.expand,
+                      children: [...previous, ?current],
+                    ),
+                    child: Image.memory(
+                      bytes,
+                      key: ValueKey(identityHashCode(bytes)),
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                    ),
+                  ),
                   if (scanning)
                     CustomPaint(painter: _ScanPainter(t: _scan.value)),
                 ],
@@ -197,13 +262,7 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
     );
   }
 
-  Widget _row(String label, _Mark mark) {
-    final color = switch (mark) {
-      _Mark.yes => const Color(0xFF34C759),
-      _Mark.no => const Color(0xFFFF453A),
-      _Mark.busy => const Color(0xFF0A84FF),
-      _Mark.todo => Colors.white38,
-    };
+  Widget _row(String label, _Mark mark, {String? detail}) {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0x22FFFFFF),
@@ -217,28 +276,31 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
               width: 22,
               height: 22,
               child: mark == _Mark.busy
-                  ? const CircularProgressIndicator(
+                  ? CircularProgressIndicator(
                       strokeWidth: 2.2,
-                      color: Color(0xFF0A84FF),
+                      color: mark.color,
                     )
-                  : Icon(
-                      mark == _Mark.yes
-                          ? Icons.check_circle_rounded
-                          : mark == _Mark.no
-                              ? Icons.cancel_rounded
-                              : Icons.radio_button_unchecked,
-                      size: 22,
-                      color: color,
-                    ),
+                  : Icon(mark.icon, size: 22, color: mark.color),
             ),
             const SizedBox(width: 12),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: mark == _Mark.skipped ? Colors.white54 : Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
+            if (detail != null)
+              Text(
+                detail,
+                style: TextStyle(
+                  color: mark.color,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
           ],
         ),
       ),
@@ -246,7 +308,19 @@ class _KycFaceMatchPanelState extends State<KycFaceMatchPanel>
   }
 }
 
-enum _Mark { todo, busy, yes, no }
+enum _Mark {
+  todo(Icons.radio_button_unchecked, Colors.white38),
+  busy(Icons.radio_button_unchecked, Color(0xFF0A84FF)),
+  yes(Icons.check_circle_rounded, Color(0xFF34C759)),
+  maybe(Icons.help_rounded, Color(0xFFFFB020)),
+  no(Icons.cancel_rounded, Color(0xFFFF453A)),
+  skipped(Icons.remove_circle_outline_rounded, Colors.white38);
+
+  const _Mark(this.icon, this.color);
+
+  final IconData icon;
+  final Color color;
+}
 
 class _ScanPainter extends CustomPainter {
   const _ScanPainter({required this.t});

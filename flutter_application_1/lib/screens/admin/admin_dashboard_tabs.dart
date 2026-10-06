@@ -243,10 +243,20 @@ class _BikesTabState extends State<_BikesTab> {
                                   }
                                 },
                                 onStatusChange: (status) async {
-                                  await widget.repo.updateBikeStatus(
-                                    bikeId: bike.id,
-                                    status: status,
-                                  );
+                                  try {
+                                    await widget.repo.updateBikeStatus(
+                                      bikeId: bike.id,
+                                      status: status,
+                                    );
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Could not update status: $e'),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   if (!context.mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
@@ -357,75 +367,42 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
     });
   }
 
+  final Set<String> _ending = {};
+
   Future<void> _endRental(RentalWithBike row) async {
     final r = row.rental;
-    final now = DateTime.now();
-    final history = await RentalRepository().fetchRateHistory();
-    if (!mounted) return;
-    final charge = rentalChargeAt(r, now, history);
-    final overtimeMin = overtimeMinutesAt(r, now);
-    final baseCost = charge.base;
-    final penalty = charge.penalty;
-    final totalCost = charge.total;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('End rental?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Rider: ${row.riderDisplay}'),
-            Text('Bike: ${row.bikeDisplay}'),
-            const SizedBox(height: 10),
-            Text('Rental charge:  ${formatPeso(baseCost)}'),
-            if (penalty > 0)
-              Text(
-                'Penalty fee: ${formatPeso(penalty)} '
-                '(${overtimeMin.round()} min overtime)',
-                style: TextStyle(color: Theme.of(ctx).colorScheme.error),
-              ),
-            Text(
-              'Total: ${formatPeso(totalCost)}',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('End rental'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
+    if (!_ending.add(r.id)) return;
     try {
-      await widget.repo.endRentalByAdmin(
-        rentalId: r.id,
-        actualCost: totalCost,
-        penaltyFee: penalty,
-      );
+      final history = await RentalRepository().fetchRateHistory();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Rental ended. Total: ${formatPeso(totalCost)}',
+      final charge = await showDialog<RentalCharge>(
+        context: context,
+        builder: (_) => _EndRentalDialog(row: row, history: history),
+      );
+      if (charge == null || !mounted) return;
+      try {
+        await widget.repo.endRentalByAdmin(
+          rentalId: r.id,
+          actualCost: charge.total,
+          penaltyFee: charge.penalty,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Rental ended. Total: ${formatPeso(charge.total)}',
+            ),
           ),
-        ),
-      );
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
+        );
+        await _refresh();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      _ending.remove(r.id);
     }
   }
 
@@ -668,6 +645,79 @@ class _ActiveRentalsTabState extends State<_ActiveRentalsTab>
             ],
           );
         }),
+    );
+  }
+}
+
+/// Pops with the charge at the moment staff confirm, so the amount shown is
+/// the amount billed even if the dialog stays open during overtime.
+class _EndRentalDialog extends StatefulWidget {
+  const _EndRentalDialog({required this.row, required this.history});
+
+  final RentalWithBike row;
+  final List<HourlyRateChange> history;
+
+  @override
+  State<_EndRentalDialog> createState() => _EndRentalDialogState();
+}
+
+class _EndRentalDialogState extends State<_EndRentalDialog> {
+  late final Timer _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clock.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.row.rental;
+    final now = DateTime.now();
+    final charge = rentalChargeAt(r, now, widget.history);
+    final overtimeMin = overtimeMinutesAt(r, now);
+    return AlertDialog(
+      title: const Text('End rental?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Rider: ${widget.row.riderDisplay}'),
+          Text('Bike: ${widget.row.bikeDisplay}'),
+          const SizedBox(height: 10),
+          Text('Rental charge:  ${formatPeso(charge.base)}'),
+          if (charge.penalty > 0)
+            Text(
+              'Penalty fee: ${formatPeso(charge.penalty)} '
+              '(${overtimeMin.round()} min overtime)',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          Text(
+            'Total: ${formatPeso(charge.total)}',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(
+            context,
+          ).pop(rentalChargeAt(r, DateTime.now(), widget.history)),
+          child: const Text('End rental'),
+        ),
+      ],
     );
   }
 }

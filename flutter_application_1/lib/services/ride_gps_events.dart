@@ -3,14 +3,31 @@ import 'package:geolocator/geolocator.dart';
 
 /// Live GPS fixes from the Android rental service.
 ///
-/// The listener is [android.location.LocationManager] GPS_PROVIDER, registered
-/// for the whole ride. It is not a one-shot read, so the chip stays on when
-/// QRide is in the background or the screen is locked.
+/// The native listener stays registered for the whole ride. It is not replaced
+/// when the screen locks or QRide is closed, because a new location request
+/// started then is ignored until the app is open again.
 class RideGpsEvents {
   static const _channel = EventChannel('com.qride.demo/ride_gps');
+  static const _control = MethodChannel('com.qride.demo/ride_gps_ctl');
 
   static Stream<Position> positions() {
     return _channel.receiveBroadcastStream().map(_toPosition);
+  }
+
+  /// Asks Android for one fresh point without dropping the ride listener.
+  static Future<void> nudge() async {
+    try {
+      await _control.invokeMethod<void>('nudge');
+    } catch (_) {}
+  }
+
+  /// Registers the fused listener again. Only call this while QRide is on
+  /// screen. A new request made with the screen off is ignored, and the
+  /// previous listener is already gone.
+  static Future<void> rebind() async {
+    try {
+      await _control.invokeMethod<void>('rebind');
+    } catch (_) {}
   }
 
   static Position _toPosition(Object? event) {

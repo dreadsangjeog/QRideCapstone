@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'location_tracking_service.dart';
 import 'rental_repository.dart';
 import 'ride_foreground_task.dart';
+import 'ride_session_sync.dart';
 import 'supabase_client.dart';
 
 /// Keeps rental GPS → admin uploads alive for the whole ride.
@@ -43,6 +44,7 @@ class RideLocationController with WidgetsBindingObserver {
   bool _started = false;
   bool _syncing = false;
   bool _syncQueued = false;
+  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
 
   String? get rentalId => _rentalId;
   bool get isSharing => _rentalId != null;
@@ -63,7 +65,12 @@ class RideLocationController with WidgetsBindingObserver {
     _authSub = SupabaseClientProvider.client.auth.onAuthStateChange.listen(
       (data) {
         if (data.event == AuthChangeEvent.signedOut) {
-          unawaited(_clearAll());
+          // Closing QRide tears the login down with the activity. That is not
+          // the rider logging out. Stopping here killed GPS on lock and on
+          // swipe even though the rental service was still allowed to run.
+          if (_lifecycle == AppLifecycleState.resumed) {
+            unawaited(_clearAll());
+          }
           return;
         }
         // Refresh the task's token without tearing down GPS.
@@ -83,6 +90,7 @@ class RideLocationController with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycle = state;
     if (state == AppLifecycleState.resumed) {
       unawaited(_onResumed());
       return;
@@ -98,6 +106,12 @@ class RideLocationController with WidgetsBindingObserver {
     if (data is! Map) return;
     if (data['stopped'] == true) {
       unawaited(_sync());
+      return;
+    }
+    final access = data['auth_access_token'];
+    final refresh = data['auth_refresh_token'];
+    if (access is String && refresh is String) {
+      unawaited(_adoptServiceSession(access, refresh));
       return;
     }
     final lat = data['lat'];
@@ -118,15 +132,49 @@ class RideLocationController with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _adoptServiceSession(String access, String refresh) async {
+    try {
+      await RideSessionStorage.adoptServiceSession(
+        accessToken: access,
+        refreshToken: refresh,
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideLocation] could not adopt renewed session: $e');
+    }
+  }
+
   void _sendHeading(double heading) {
     RideForegroundTask.pushHeading(heading);
   }
 
   Future<void> _onResumed() async {
+    final wasRunning =
+        _usesForegroundWriter && await RideForegroundTask.isRunning;
     await _sync();
     if (!_usesForegroundWriter) {
       await tracking.resumeFromBackground();
+      return;
     }
+    // A service started by the sync above already opened GPS while QRide
+    // is on screen. Restarting it again would drop that request.
+    if (_rentalId == null || !wasRunning) return;
+    final now = DateTime.now().toUtc();
+    final shared = await RideForegroundTask.lastFixAt();
+    final uiAt = tracking.position.value?.timestamp;
+    final sharedFresh = shared != null &&
+        now.difference(shared.toUtc()) < const Duration(seconds: 20);
+    final uiFresh = uiAt != null &&
+        now.difference(uiAt.toUtc()) < const Duration(seconds: 20);
+    if (sharedFresh || uiFresh) {
+      RideForegroundTask.reopenGps();
+      return;
+    }
+    // The listener died while the phone was locked. Replace the service
+    // now, while QRide is on screen, so Android accepts the new request.
+    // A missing timestamp used to skip this, which left GPS dead.
+    final restarted = await RideForegroundTask.restartWriter();
+    if (!restarted) RideForegroundTask.reopenGps();
   }
 
   Future<void> _sync() async {
@@ -210,7 +258,14 @@ class RideLocationController with WidgetsBindingObserver {
       return;
     }
 
-    if (_rentalId == null && _watchId == null) return;
+    if (_rentalId == null && _watchId == null) {
+      // Left running from before QRide was reopened, for a ride that has
+      // since closed.
+      if (_usesForegroundWriter && await RideForegroundTask.isRunning) {
+        await RideForegroundTask.stop();
+      }
+      return;
+    }
     await _clearAll();
   }
 
@@ -303,10 +358,11 @@ class RideLocationController with WidgetsBindingObserver {
     await _channel?.unsubscribe();
     _channel = null;
     _started = false;
-    final signedIn =
-        SupabaseClientProvider.client.auth.currentUser != null;
     var keepService = false;
-    if (_usesForegroundWriter && signedIn) {
+    if (_usesForegroundWriter) {
+      // The login object is often already gone by the time a swipe or a
+      // screen-off activity destroy gets here. The service's saved rental
+      // is what decides whether sharing continues.
       keepService = _rentalId != null ||
           _watchId != null ||
           await RideForegroundTask.isRunning;

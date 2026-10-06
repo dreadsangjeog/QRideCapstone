@@ -294,6 +294,8 @@ class _BikeActionsMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // A rented bike is freed by ending, rejecting, or cancelling its rental.
+    final canSetStatus = status != 'rented';
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: PopupMenuButton<_BikeMenuAction>(
@@ -316,13 +318,17 @@ class _BikeActionsMenu extends StatelessWidget {
             Icons.check_circle_rounded,
             const Color(0xFF22C55E),
             selected: status == 'available',
+            enabled: canSetStatus,
+            disabledColor: cs.onSurfaceVariant,
           ),
           _statusItem(
             _BikeMenuAction.maintenance,
-            'Maintenance',
+            canSetStatus ? 'Maintenance' : 'End rental to change status',
             Icons.build_rounded,
             cs.error,
             selected: status == 'maintenance',
+            enabled: canSetStatus,
+            disabledColor: cs.onSurfaceVariant,
           ),
           const PopupMenuDivider(),
           PopupMenuItem<_BikeMenuAction>(
@@ -357,16 +363,20 @@ class _BikeActionsMenu extends StatelessWidget {
     IconData icon,
     Color color, {
     required bool selected,
+    required bool enabled,
+    required Color disabledColor,
   }) {
+    final tint = enabled ? color : disabledColor;
     return PopupMenuItem<_BikeMenuAction>(
       value: value,
+      enabled: enabled,
       child: Row(
         children: [
-          Icon(icon, color: color, size: 18),
+          Icon(icon, color: tint, size: 18),
           const SizedBox(width: 10),
           Expanded(child: Text(label)),
           if (selected)
-            Icon(Icons.check_rounded, size: 16, color: color),
+            Icon(Icons.check_rounded, size: 16, color: tint),
         ],
       ),
     );
@@ -411,7 +421,9 @@ class _RentalDetailDialog extends StatelessWidget {
             Text('Bike: $bikeLine', style: theme.textTheme.bodyLarge),
             const SizedBox(height: 8),
             Text('Rider: $username'),
-            Text('Started: ${DateFormat('MMM d, h:mm a').format(rental.startedAt)}'),
+            Text(
+              'Started: ${DateFormat('MMM d, h:mm a').format((rental.approvedAt ?? rental.startedAt).toLocal())}',
+            ),
             const SizedBox(height: 12),
             Text(
               'Last known location',
@@ -428,7 +440,7 @@ class _RentalDetailDialog extends StatelessWidget {
               if (loc.accuracyM != null)
                 Text('Accuracy: ${loc.accuracyM!.toStringAsFixed(0)} m'),
               Text(
-                DateFormat('MMM d, h:mm a').format(loc.recordedAt),
+                DateFormat('MMM d, h:mm a').format(loc.recordedAt.toLocal()),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

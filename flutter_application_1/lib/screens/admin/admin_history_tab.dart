@@ -35,6 +35,7 @@ class _AdminHistoryTabState extends State<AdminHistoryTab>
     (label: 'Ended', status: 'ended'),
     (label: 'Active', status: 'active'),
     (label: 'Pending', status: 'pending'),
+    (label: 'Cancelled', status: 'cancelled'),
   ];
 
   String? _statusFilter;
@@ -309,6 +310,8 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
         'active' => cs.primary,
         'pending' => dark ? const Color(0xFFFBBF24) : const Color(0xFFD97706),
         'rejected' => cs.error,
+        'cancelled' =>
+          dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
         _ => cs.onSurfaceVariant,
       };
   }
@@ -318,6 +321,7 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
         'active' => 'Active',
         'pending' => 'Pending',
         'rejected' => 'Rejected',
+        'cancelled' => 'Cancelled',
         _ => status,
       };
 
@@ -351,6 +355,8 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
         return 'Requested ${dfShort.format(r.startedAt.toLocal())}';
       case 'rejected':
         return 'Rejected';
+      case 'cancelled':
+        return 'Cancelled by the rider';
       default:
         return '';
     }
@@ -374,7 +380,7 @@ class _HistoryRentalCardState extends State<_HistoryRentalCard> {
     double? base;
     double? penSuggested;
     double? totalSuggested;
-    if (hasRideWindow && r.status != 'rejected') {
+    if (hasRideWindow && r.status != 'rejected' && r.status != 'cancelled') {
       elapsedMin = rideElapsedMinutes(r, endOrNow);
       final ot = overtimeMinutesAt(r, endOrNow);
       otMin = ot;

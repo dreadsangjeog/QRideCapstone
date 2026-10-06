@@ -18,12 +18,27 @@ class UserHistoryScreen extends StatefulWidget {
 class _UserHistoryScreenState extends State<UserHistoryScreen> {
   final _repo = RentalRepository();
   late Future<List<RentalHistoryRow>> _future = _load();
+  int? _navIndex;
 
   Future<List<RentalHistoryRow>> _load() => _repo.fetchMyRentalHistory();
 
   Future<void> _refresh() async {
     setState(() => _future = _load());
     await _future;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final index = RiderNavScope.maybeOf(context)?.currentIndex;
+    if (index == _navIndex) return;
+    final opened = index == 2 && _navIndex != null;
+    _navIndex = index;
+    if (opened) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _future = _load());
+      });
+    }
   }
 
   @override
@@ -35,7 +50,8 @@ class _UserHistoryScreenState extends State<UserHistoryScreen> {
         child: FutureBuilder<List<RentalHistoryRow>>(
           future: _future,
           builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
+            if (snapshot.connectionState != ConnectionState.done &&
+                !snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {

@@ -123,8 +123,20 @@ class _RiderLiveMapState extends State<_RiderLiveMap> {
     final next = LatLng(pos.latitude, pos.longitude);
     final h = widget.tracking.heading.value ??
         (pos.heading >= 0 && pos.heading <= 360 ? pos.heading : null);
+    final first = _pose == null;
     _pose ??= SmoothLatLng(next);
-    _pose!.setTarget(next, h);
+    if (first) {
+      _pose!.snapTo(next, h);
+      if (widget.followUser && _mapReady) {
+        try {
+          widget.controller.move(next, widget.controller.camera.zoom);
+        } catch (_) {
+          widget.controller.move(next, 16);
+        }
+      }
+    } else {
+      _pose!.setTarget(next, h);
+    }
     if (mounted) setState(() {});
   }
 
@@ -184,8 +196,9 @@ class _RiderLiveMapState extends State<_RiderLiveMap> {
                 onMapReady: () {
                   _mapReady = true;
                   widget.onMapReady();
-                  if (widget.followUser && pos != null) {
-                    controller.move(shown, 16);
+                  final placed = _pose?.current;
+                  if (widget.followUser && placed != null) {
+                    controller.move(placed, 16);
                   }
                 },
                 onPositionChanged: (camera, hasGesture) {
@@ -198,7 +211,7 @@ class _RiderLiveMapState extends State<_RiderLiveMap> {
                 ),
               ),
               children: [
-                qrideStreetTiles(),
+                ...qrideStreetTiles(),
                 CircleLayer(circles: circles),
                 MarkerLayer(markers: markers),
               ],
@@ -458,6 +471,22 @@ class _CostRow extends StatelessWidget {
   }
 }
 
+/// Shown when the server refuses an extension.
+String extendErrorText(Object error) {
+  final msg = error.toString();
+  if (msg.contains('rental_in_overtime')) {
+    return 'Time is up, so this ride can no longer be extended. '
+        'Return the bike to stop the overtime charge.';
+  }
+  if (msg.contains('rental_not_active_or_not_owner')) {
+    return 'This ride is no longer active.';
+  }
+  if (msg.contains('extension_not_saved')) {
+    return 'The extra time was not saved. Try again in a moment.';
+  }
+  return 'Could not extend: ${friendlyNetworkError(error)}';
+}
+
 class ExtendTimeSheet extends StatefulWidget {
   const ExtendTimeSheet({
     required this.currentPlannedMinutes,
@@ -486,6 +515,41 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
   int _extraMinutes = 15;
 
   int get _newTotalMinutes => widget.currentPlannedMinutes + _extraMinutes;
+
+  Future<void> _confirmExtend() async {
+    final minutes = _extraMinutes;
+    final cost = formatPeso(_extraCost);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Extend by $minutes min?'),
+        content: Text(
+          'The total for this $minutes min is $cost. '
+          'Your booked time becomes $_bookedLabel.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Go back'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) Navigator.of(context).pop(minutes);
+  }
+
+  String get _bookedLabel {
+    final minutes = _newTotalMinutes;
+    if (minutes < 60) return '${minutes}m';
+    final hours = minutes ~/ 60;
+    final rest = minutes % 60;
+    if (rest == 0) return '${hours}h';
+    return '${hours}h ${rest}m';
+  }
 
   double get _extraCost {
     final history = widget.history;
@@ -520,7 +584,7 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
     final cs = theme.colorScheme;
     final bottomPad = MediaQuery.paddingOf(context).bottom;
 
-    return Padding(
+    return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -580,7 +644,7 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Added cost',
+                      'Total for $_extraMinutes min',
                       style: theme.textTheme.labelMedium
                           ?.copyWith(color: cs.onSurfaceVariant),
                     ),
@@ -603,11 +667,7 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
                           ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     Text(
-                      _newTotalMinutes >= 60
-                          ? '${_newTotalMinutes ~/ 60}h '
-                              '${_newTotalMinutes % 60 > 0 ? "${_newTotalMinutes % 60}m" : ""}'
-                                  .trim()
-                          : '${_newTotalMinutes}m',
+                      _bookedLabel,
                       style: theme.textTheme.titleSmall
                           ?.copyWith(fontWeight: FontWeight.w800),
                     ),
@@ -621,7 +681,7 @@ class _ExtendTimeSheetState extends State<ExtendTimeSheet> {
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(52),
             ),
-            onPressed: () => Navigator.of(context).pop(_extraMinutes),
+            onPressed: _confirmExtend,
             icon: const Icon(Icons.more_time_rounded),
             label: Text('Extend by $_extraMinutes min'),
           ),

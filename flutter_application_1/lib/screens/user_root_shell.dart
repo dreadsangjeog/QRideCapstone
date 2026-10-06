@@ -9,6 +9,7 @@ import '../theme/brand.dart';
 import '../widgets/user_portal_chrome.dart';
 import 'kyc/kyc_scope.dart';
 import 'legal/terms_screen.dart';
+import 'notification_settings_screen.dart';
 import 'notifications_screen.dart';
 import 'user_account_settings_screen.dart';
 import 'user_active_rental_screen.dart';
@@ -93,6 +94,14 @@ class _UserRootShellState extends State<UserRootShell> {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => const UserAccountSettingsScreen(),
+        ),
+      );
+      return;
+    }
+    if (value == 7) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const NotificationSettingsScreen(),
         ),
       );
       return;
@@ -371,6 +380,12 @@ class _RiderDrawer extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Divider(color: cs.outlineVariant.withValues(alpha: 0.45)),
+            ),
+            _DrawerItem(
+              icon: Icons.notifications_outlined,
+              label: 'Notification settings',
+              selected: false,
+              onTap: () => onPick(7),
             ),
             _DrawerItem(
               icon: Icons.settings_outlined,

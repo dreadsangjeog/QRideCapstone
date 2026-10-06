@@ -209,10 +209,7 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
   Future<void> _onFaceFinished(KycAutoMatchResult match) async {
     try {
       if (match.photoMatch) {
-        await _repo.holdForStaffReview(
-          note:
-              'Name and face passed the app check. Waiting for staff to verify.',
-        );
+        await _repo.holdForStaffReview(note: _staffNote(match));
       } else {
         await _repo.applyAutoReview(
           nameMatch: true,
@@ -230,6 +227,19 @@ class _KycWizardScreenState extends State<KycWizardScreen> {
         _error = match.photoMatch ? e.toString() : match.note;
       });
     }
+  }
+
+  static String _staffNote(KycAutoMatchResult match) {
+    final score = match.faceScore;
+    final scoreText = score == null ? '' : ' (score ${score.toStringAsFixed(2)})';
+    return switch (match.faceVerdict) {
+      KycFaceVerdict.match =>
+        'Name matched the ID. Face check: strong match$scoreText. Waiting for staff to verify.',
+      _ when score == null =>
+        'Name matched the ID. The app could not compare the faces on this phone. Compare the ID photo and selfie before approving.',
+      _ =>
+        'Name matched the ID. Face check: unsure$scoreText. Compare the ID photo and selfie closely before approving.',
+    };
   }
 
   @override
@@ -576,6 +586,7 @@ class _IntroPage extends StatelessWidget {
                     initialDate: initial,
                     firstDate: DateTime(1920),
                     lastDate: DateTime.now(),
+                    startWithYear: birthdate.text.isEmpty,
                   );
                   if (picked == null) return;
                   final m = picked.month.toString().padLeft(2, '0');

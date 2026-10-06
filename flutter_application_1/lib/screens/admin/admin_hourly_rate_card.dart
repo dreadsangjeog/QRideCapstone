@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/admin_repository.dart';
 import '../../services/rental_repository.dart';
+import '../../widgets/qride_glass.dart';
 
 /// Current hourly fee for new rentals. Past rentals are not rewritten.
 class HourlyRateCard extends StatefulWidget {
@@ -47,53 +48,82 @@ class HourlyRateCardState extends State<HourlyRateCard> {
     final next = await showDialog<double>(
       context: context,
       builder: (ctx) {
-        final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          constraints: const BoxConstraints(minWidth: 280, maxWidth: 400),
-          icon: Icon(Icons.payments_outlined, color: cs.primary),
-          title: const Text('Hourly bike fee'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'New requests and the rest of an open ride use this fee. Completed rides keep the amount already saved.',
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: ctrl,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+        final theme = Theme.of(ctx);
+        final cs = theme.colorScheme;
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: GlassPanel(
+              radius: 22,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Icon(Icons.payments_outlined, color: cs.primary),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Hourly bike fee',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'New requests and the rest of an open ride use this fee. Completed rides keep the amount already saved.',
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: ctrl,
+                    autofocus: true,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
+                    decoration: const InputDecoration(
+                      labelText: 'Pesos per hour',
+                      prefixText: '₱ ',
+                    ),
+                    onSubmitted: (_) {
+                      final parsed = double.tryParse(ctrl.text.trim());
+                      if (parsed != null) Navigator.of(ctx).pop(parsed);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () {
+                          final parsed = double.tryParse(ctrl.text.trim());
+                          if (parsed == null || parsed <= 0 || parsed > 10000) {
+                            return;
+                          }
+                          Navigator.of(ctx).pop(parsed);
+                        },
+                        child: const Text('Save'),
+                      ),
+                    ],
+                  ),
                 ],
-                decoration: const InputDecoration(
-                  labelText: 'Pesos per hour',
-                  prefixText: '₱ ',
-                ),
-                onSubmitted: (_) {
-                  final parsed = double.tryParse(ctrl.text.trim());
-                  if (parsed != null) Navigator.of(ctx).pop(parsed);
-                },
               ),
-            ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final parsed = double.tryParse(ctrl.text.trim());
-                if (parsed == null || parsed <= 0 || parsed > 10000) return;
-                Navigator.of(ctx).pop(parsed);
-              },
-              child: const Text('Save'),
-            ),
-          ],
         );
       },
     );
@@ -121,50 +151,51 @@ class HourlyRateCardState extends State<HourlyRateCard> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final rate = _rate;
-    return Material(
-      color: cs.surface.withValues(alpha: 0.72),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: GlassPanel(
+        radius: 18,
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: cs.primary.withValues(alpha: 0.1),
+                color: cs.primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(Icons.payments_outlined, color: cs.primary, size: 20),
             ),
             const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Hourly fee',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
-                    ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Hourly fee',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
                   ),
-                  Text(
-                    _loading || rate == null
-                        ? '…'
-                        : '₱${_money(rate)} per hour',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
+                ),
+                Text(
+                  _loading || rate == null ? '…' : '₱${_money(rate)} per hour',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 14),
             OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 36),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed: _loading || _saving ? null : _edit,
               child: Text(_saving ? 'Saving…' : 'Change'),
             ),

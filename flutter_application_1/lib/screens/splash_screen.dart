@@ -1,245 +1,149 @@
-import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
 import '../theme/brand.dart';
 import '../widgets/qride_brand.dart';
 
-part 'splash_painters.dart';
-
-/// Cold-start splash — light blue chrome + launcher bike mark.
+/// Cold-start splash. Starts on the same frame as Android's launch screen,
+/// reveals the wordmark, then hands over once [ready] completes.
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key, required this.onFinished});
+  const SplashScreen({super.key, required this.onFinished, this.ready});
 
   final VoidCallback onFinished;
+
+  /// Work to finish before leaving the splash, such as looking up where a
+  /// signed-in user belongs. The splash never waits longer than [maxWait].
+  final Future<void>? ready;
+
+  static const Duration intro = Duration(milliseconds: 1000);
+  static const Duration maxWait = Duration(seconds: 6);
+
+  /// Decodes the bike before the first frame, so the splash never draws the
+  /// plate without it while Android's launch screen hands over.
+  static Future<void> precacheMark() async {
+    final done = Completer<void>();
+    final stream = const AssetImage(QrideBrand.bikeLight)
+        .resolve(ImageConfiguration.empty);
+    void finish() {
+      if (!done.isCompleted) done.complete();
+    }
+
+    final listener = ImageStreamListener(
+      (_, _) => finish(),
+      onError: (_, _) => finish(),
+    );
+    stream.addListener(listener);
+    await done.future.timeout(
+      const Duration(milliseconds: 800),
+      onTimeout: () {},
+    );
+    stream.removeListener(listener);
+  }
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _intro = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 2200),
+    duration: SplashScreen.intro,
   );
 
-  late final AnimationController _pulse = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2200),
-  )..repeat(reverse: true);
-
-  late final Animation<double> _logoOpacity = CurvedAnimation(
+  late final Animation<double> _lift = CurvedAnimation(
     parent: _intro,
-    curve: const Interval(0.0, 0.40, curve: Curves.easeOut),
+    curve: const Interval(0.12, 0.72, curve: Curves.easeOutCubic),
   );
 
-  late final Animation<double> _logoScale = Tween<double>(begin: 0.92, end: 1.0)
-      .animate(
-    CurvedAnimation(
-      parent: _intro,
-      curve: const Interval(0.0, 0.50, curve: Curves.easeOutCubic),
-    ),
-  );
-
-  late final Animation<Offset> _logoSlide = Tween<Offset>(
-    begin: const Offset(0, 0.06),
-    end: Offset.zero,
-  ).animate(
-    CurvedAnimation(
-      parent: _intro,
-      curve: const Interval(0.0, 0.50, curve: Curves.easeOutCubic),
-    ),
-  );
-
-  late final Animation<double> _tagOpacity = CurvedAnimation(
+  late final Animation<double> _reveal = CurvedAnimation(
     parent: _intro,
-    curve: const Interval(0.35, 0.72, curve: Curves.easeOut),
+    curve: const Interval(0.32, 0.9, curve: Curves.easeOutCubic),
   );
 
-  late final Animation<Offset> _tagSlide = Tween<Offset>(
-    begin: const Offset(0, 0.12),
-    end: Offset.zero,
-  ).animate(
-    CurvedAnimation(
-      parent: _intro,
-      curve: const Interval(0.35, 0.72, curve: Curves.easeOutCubic),
-    ),
-  );
-
-  late final Animation<double> _progressOpacity = CurvedAnimation(
+  late final Animation<double> _glow = CurvedAnimation(
     parent: _intro,
-    curve: const Interval(0.60, 0.85, curve: Curves.easeOut),
+    curve: const Interval(0.12, 1, curve: Curves.easeOut),
   );
+
+  bool _ready = false;
+  bool _finished = false;
+  bool _showSpinner = false;
+  Timer? _spinnerTimer;
+  Timer? _maxWait;
 
   @override
   void initState() {
     super.initState();
-    _intro.forward();
-    _pulse.forward();
-    Future.delayed(const Duration(milliseconds: 2600), () {
-      if (mounted) widget.onFinished();
+    final ready = widget.ready;
+    if (ready == null) {
+      _ready = true;
+    } else {
+      ready.then((_) => _markReady(), onError: (_) => _markReady());
+    }
+    _intro.addStatusListener((status) {
+      if (status == AnimationStatus.completed) _maybeFinish();
     });
+    _spinnerTimer = Timer(
+      SplashScreen.intro + const Duration(milliseconds: 600),
+      () {
+        if (mounted && !_finished) setState(() => _showSpinner = true);
+      },
+    );
+    _maxWait = Timer(SplashScreen.intro + SplashScreen.maxWait, _markReady);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_intro.isAnimating || _intro.isCompleted) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _intro.value = 1;
+      _maybeFinish();
+    } else {
+      _intro.forward();
+    }
+  }
+
+  void _markReady() {
+    if (_ready) return;
+    _ready = true;
+    _maybeFinish();
+  }
+
+  void _maybeFinish() {
+    if (_finished || !_ready || !_intro.isCompleted || !mounted) return;
+    _finished = true;
+    _spinnerTimer?.cancel();
+    _maxWait?.cancel();
+    widget.onFinished();
   }
 
   @override
   void dispose() {
+    _spinnerTimer?.cancel();
+    _maxWait?.cancel();
     _intro.dispose();
-    _pulse.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final wordStyle = TextStyle(
-      fontSize: 40,
-      fontWeight: FontWeight.w800,
-      letterSpacing: -1.2,
-      height: 1.05,
-      color: isDark ? Colors.white : QrideBrand.accentDeep,
-    );
-    final tagStyle = TextStyle(
-      fontSize: 15,
-      fontWeight: FontWeight.w600,
-      letterSpacing: 0.4,
-      color: isDark
-          ? QrideBrand.accentSoft.withValues(alpha: 0.9)
-          : QrideBrand.accentDeep.withValues(alpha: 0.70),
-    );
-    final ringDot = isDark
-        ? QrideBrand.accentSoft.withValues(alpha: 0.55)
-        : QrideBrand.accent.withValues(alpha: 0.40);
-
     return Scaffold(
-      body: QrideBrandBackdrop(
-        child: SafeArea(
-          child: AnimatedBuilder(
-            animation: Listenable.merge([_intro, _pulse]),
-            builder: (context, _) {
-              final pulseT = _pulse.value;
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  Center(
-                    child: FadeTransition(
-                      opacity: _logoOpacity,
-                      child: Container(
-                        width: 300 + 40 * pulseT,
-                        height: 300 + 40 * pulseT,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            colors: [
-                              QrideBrand.accent
-                                  .withValues(alpha: isDark ? 0.22 : 0.12),
-                              QrideBrand.accentSoft
-                                  .withValues(alpha: isDark ? 0.10 : 0.06),
-                              Colors.transparent,
-                            ],
-                            stops: [0.0, 0.35 + 0.1 * pulseT, 1.0],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Center(
-                    child: SizedBox(
-                      width: 340,
-                      height: 340,
-                      child: FadeTransition(
-                        opacity: _tagOpacity,
-                        child: CustomPaint(
-                          painter: _OrbitingDots(
-                            t: _intro.value,
-                            color: ringDot,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Column(
-                    children: [
-                      Expanded(
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 28),
-                            child: SlideTransition(
-                              position: _logoSlide,
-                              child: FadeTransition(
-                                opacity: _logoOpacity,
-                                child: ScaleTransition(
-                                  scale: _logoScale,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const QrideBikeMark(size: 108),
-                                      const SizedBox(height: 22),
-                                      Text('QRide', style: wordStyle),
-                                      const SizedBox(height: 16),
-                                      SlideTransition(
-                                        position: _tagSlide,
-                                        child: FadeTransition(
-                                          opacity: _tagOpacity,
-                                          child: Text(
-                                            'Scan  ·  Ride  ·  Return',
-                                            style: tagStyle,
-                                            textAlign: TextAlign.center,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      FadeTransition(
-                        opacity: _progressOpacity,
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 36),
-                          child: Column(
-                            children: [
-                              SizedBox(
-                                width: 128,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(999),
-                                  child: LinearProgressIndicator(
-                                    minHeight: 4,
-                                    backgroundColor: (isDark
-                                            ? Colors.white
-                                            : QrideBrand.accentDeep)
-                                        .withValues(alpha: 0.10),
-                                    valueColor: const AlwaysStoppedAnimation(
-                                      QrideBrand.accent,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              Text(
-                                'LOADING',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2.8,
-                                  color: (isDark
-                                          ? Colors.white
-                                          : QrideBrand.accentDeep)
-                                      .withValues(alpha: 0.38),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              );
-            },
+      body: Semantics(
+        label: 'QRide',
+        child: AnimatedBuilder(
+          animation: _intro,
+          builder: (context, _) => QrideLaunchLayout(
+            lift: _lift.value,
+            reveal: _reveal.value,
+            glow: _glow.value,
+            footer: AnimatedOpacity(
+              opacity: _showSpinner ? 1 : 0,
+              duration: const Duration(milliseconds: 300),
+              child: const QrideLaunchSpinner(),
+            ),
           ),
         ),
       ),

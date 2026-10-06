@@ -11,10 +11,20 @@ class _HistoryCard extends StatelessWidget {
     final r = item.rental;
 
     final isEnded = r.isEnded;
-    final statusColor = isEnded ? const Color(0xFF22C55E) : cs.error;
-    final statusLabel = isEnded ? 'Completed' : 'Rejected';
-    final statusIcon =
-        isEnded ? Icons.check_circle_rounded : Icons.cancel_rounded;
+    final isCancelled = r.isCancelled;
+    final statusColor = isEnded
+        ? const Color(0xFF22C55E)
+        : isCancelled
+            ? cs.onSurfaceVariant
+            : cs.error;
+    final statusLabel = isEnded
+        ? 'Completed'
+        : isCancelled
+            ? 'Cancelled'
+            : 'Rejected';
+    final statusIcon = isEnded
+        ? Icons.check_circle_rounded
+        : Icons.cancel_rounded;
 
     final df = DateFormat('MMM d, yyyy  h:mm a');
     final dateLabel = df.format(r.startedAt.toLocal());

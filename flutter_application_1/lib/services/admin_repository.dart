@@ -31,11 +31,13 @@ Future<List<RentalWithBike>> _rentalsWithProfiles(dynamic rows) async {
     if (id != null && id.isNotEmpty) ids.add(id);
   }
   final byId = <String, Map<String, dynamic>>{};
-  if (ids.isNotEmpty) {
+  // Each id goes in the request URL, so look them up in small batches.
+  final idList = ids.toList();
+  for (var i = 0; i < idList.length; i += 100) {
     final profiles = await SupabaseClientProvider.client
         .from('profiles')
         .select('id, username, first_name, middle_name, last_name')
-        .inFilter('id', ids.toList());
+        .inFilter('id', idList.sublist(i, min(i + 100, idList.length)));
     for (final item in profiles as List<dynamic>) {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
@@ -102,7 +104,8 @@ class AdminRepository {
     );
   }
 
-  /// Looks up a bike by its [code] (exact match after trim).
+  /// Looks up a bike by its [code]. An exact match wins. Otherwise letter case
+  /// is ignored, as long as only one bike matches.
   Future<Bike?> fetchBikeByCode(String code) async {
     final c = code.trim();
     if (c.isEmpty) return null;
@@ -111,8 +114,20 @@ class AdminRepository {
         .select()
         .eq('code', c)
         .maybeSingle();
-    if (row == null) return null;
-    return Bike.fromJson(Map<String, dynamic>.from(row));
+    if (row != null) return Bike.fromJson(Map<String, dynamic>.from(row));
+    final literal = c.replaceAllMapped(RegExp(r'[\\%_]'), (m) => '\\${m[0]}');
+    final rows = await SupabaseClientProvider.client
+        .from('bikes')
+        .select()
+        .ilike('code', literal)
+        .limit(5);
+    final wanted = c.toLowerCase();
+    final matches = [
+      for (final r in rows)
+        if (r['code']?.toString().toLowerCase() == wanted) r,
+    ];
+    if (matches.length != 1) return null;
+    return Bike.fromJson(Map<String, dynamic>.from(matches.first));
   }
 
   Future<void> updateBikeStatus({

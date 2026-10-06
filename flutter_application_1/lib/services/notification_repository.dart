@@ -104,6 +104,27 @@ class NotificationRepository {
     });
   }
 
+  /// Whether this account has a [type] row about [rentalId] created since
+  /// [since]. [notifyAdmins] gives every admin a copy, so this shows whether
+  /// any admin's screen already reported it.
+  Future<bool> hasMineSince({
+    required String type,
+    required String rentalId,
+    required DateTime since,
+  }) async {
+    final uid = SupabaseClientProvider.client.auth.currentUser?.id;
+    if (uid == null) return false;
+    final rows = await SupabaseClientProvider.client
+        .from('notifications')
+        .select('id')
+        .eq('user_id', uid)
+        .eq('type', type)
+        .eq('data->>rental_id', rentalId)
+        .gte('created_at', since.toUtc().toIso8601String())
+        .limit(1);
+    return (rows as List<dynamic>).isNotEmpty;
+  }
+
   /// Inbox row for every admin account (server RPC).
   Future<void> notifyAdmins({
     required String type,

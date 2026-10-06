@@ -104,25 +104,25 @@ class _AdminGenerateQrScreenState extends State<AdminGenerateQrScreen> {
   bool get _fieldsLocked => _isExisting || _committed;
 
   Future<void> _saveAndShowQr() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_busy || !_formKey.currentState!.validate()) return;
     final code = _codeCtrl.text.trim();
     final label = _labelCtrl.text.trim();
 
-    final duplicate = await widget.repo.fetchBikeByCode(code);
-    if (!mounted) return;
-    if (duplicate != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'The code "$code" is already used by another bike. Choose a different code.',
-          ),
-        ),
-      );
-      return;
-    }
-
     setState(() => _busy = true);
     try {
+      final duplicate = await widget.repo.fetchBikeByCode(code);
+      if (!mounted) return;
+      if (duplicate != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'The code "$code" is already used by another bike. Choose a different code.',
+            ),
+          ),
+        );
+        return;
+      }
+
       final created = await widget.repo.createBike(
         code: code,
         label: label,

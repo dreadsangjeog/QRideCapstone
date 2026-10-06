@@ -41,4 +41,9 @@ class QRideApplication : Application() {
             },
         )
     }
+
+    /** Fused fixes delivered by [RideGpsReceiver] while the service is idle. */
+    fun deliverRideFix(location: android.location.Location) {
+        rideGps?.onExternalFix(location)
+    }
 }

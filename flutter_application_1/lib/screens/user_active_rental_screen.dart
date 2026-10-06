@@ -14,7 +14,9 @@ import '../services/ride_location_controller.dart';
 import '../services/notification_repository.dart';
 import '../services/notification_service.dart';
 import '../services/rental_repository.dart';
+import '../services/ride_timer_alerts.dart';
 import '../services/supabase_client.dart';
+import '../utils/network_errors.dart';
 import '../utils/peso.dart';
 import '../utils/rental_billing.dart';
 import '../widgets/heading_map_pin.dart';
@@ -49,12 +51,12 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   DateTime _now = DateTime.now();
 
   // Notification sentinels (timer warnings; approve/end via inbox Realtime)
-  bool _notifiedApproved = false;
   bool _notifiedFiveMin = false;
   bool _notifiedOvertime = false;
   bool _extending = false;
 
   RealtimeChannel? _channel;
+  int? _navIndex;
 
   @override
   void initState() {
@@ -76,6 +78,16 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final index = RiderNavScope.maybeOf(context)?.currentIndex;
+    if (index != _navIndex) {
+      final opened = index == 1 && _navIndex != null;
+      _navIndex = index;
+      if (opened) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_loading) unawaited(_refreshRental());
+        });
+      }
+    }
     final next = RideLocationScope.maybeOf(context)?.tracking;
     if (next == _tracking) return;
     _tracking?.position.removeListener(_onPositionUpdate);
@@ -118,61 +130,100 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     try {
       final rental = await _repo.fetchMyActiveRental();
       if (!mounted) return;
-      setState(() {
-        _rental = rental;
-        _loading = false;
-      });
-      if (rental?.isActive == true) {
-        _startRideTimer();
-      }
+      setState(() => _loading = false);
+      if (rental != null) _showRental(rental);
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Catches up on anything Realtime missed, such as a request sent from the
+  /// scan screen or a ride that ended while the phone was offline.
+  Future<void> _refreshRental() async {
+    if (!AuthService.isSignedIn) return;
+    try {
+      final open = await _repo.fetchMyActiveRental();
+      if (!mounted) return;
+      if (open != null) {
+        _showRental(open);
+        return;
+      }
+      final current = _rental;
+      if (current == null || !(current.isPending || current.isActive)) return;
+      final closed = await _repo.fetchRentalById(current.id);
+      if (!mounted || _rental?.id != current.id) return;
+      if (closed != null) {
+        _showRental(closed);
+      } else {
+        _ticker?.cancel();
+        setState(() => _rental = null);
+      }
+    } catch (_) {}
   }
 
   void _subscribeRealtime() {
     final uid = SupabaseClientProvider.client.auth.currentUser?.id;
     if (uid == null) return;
 
+    final mine = PostgresChangeFilter(
+      type: PostgresChangeFilterType.eq,
+      column: 'user_id',
+      value: uid,
+    );
     _channel = SupabaseClientProvider.client
         .channel('rental-user-$uid')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'rentals',
+          filter: mine,
+          callback: (payload) => _onRentalChange(payload.newRecord),
+        )
         .onPostgresChanges(
           event: PostgresChangeEvent.update,
           schema: 'public',
           table: 'rentals',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'user_id',
-            value: uid,
-          ),
+          filter: mine,
           callback: (payload) => _onRentalChange(payload.newRecord),
         )
         .subscribe();
   }
 
   void _onRentalChange(Map<String, dynamic> record) {
-    final updated = Rental.fromJson(record);
+    final Rental updated;
+    try {
+      updated = Rental.fromJson(record);
+    } catch (_) {
+      return;
+    }
     if (!mounted) return;
-    final previous = _rental;
-    setState(() => _rental = updated);
-
     // Approve / reject / ended banners + inbox rows come from DB triggers
     // via NotificationInboxController. This screen only drives GPS / UI.
-    if (updated.isActive && !_notifiedApproved) {
-      _notifiedApproved = true;
-      _startRideTimer();
-    }
+    _showRental(updated);
+  }
 
-    if (updated.isActive &&
-        previous != null &&
-        previous.isActive &&
-        updated.plannedMinutes > previous.plannedMinutes) {
-      _resetTimerSentinels(updated);
+  void _showRental(Rental next) {
+    final previous = _rental;
+    final same = previous?.id == next.id;
+    // Staff can still edit a finished ride (billing fixes). That update must
+    // not replace the ride on screen.
+    if (!same && !next.isPending && !next.isActive) return;
+    if (!same) {
+      _notifiedFiveMin = false;
+      _notifiedOvertime = false;
     }
+    setState(() => _rental = next);
 
-    if (updated.isEnded || updated.isRejected) {
+    if (!next.isActive) {
       _ticker?.cancel();
+      return;
     }
+    if (same &&
+        previous!.isActive &&
+        next.plannedMinutes > previous.plannedMinutes) {
+      _resetTimerSentinels(next);
+    }
+    if (_ticker?.isActive != true) _startRideTimer();
   }
 
   void _startRideTimer() {
@@ -191,35 +242,41 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     if (endTime == null) return;
 
     final remaining = endTime.difference(_now);
-    final inbox = NotificationRepository();
 
     if (!_notifiedFiveMin &&
         remaining.inSeconds <= 300 &&
         remaining.inSeconds > 0) {
       _notifiedFiveMin = true;
-      NotificationService.notifyFiveMinuteWarning();
-      unawaited(
-        inbox.insertMine(
-          type: 'rental_five_min',
-          title: '5 minutes left',
-          body: 'Your rental is about to expire. Head back soon.',
-          data: {'rental_id': rental.id},
-        ),
-      );
+      unawaited(_sendTimerAlert(rental.id, endTime, RideTimerAlert.fiveMinutes));
     }
 
     if (!_notifiedOvertime && _now.isAfter(endTime)) {
       _notifiedOvertime = true;
-      NotificationService.notifyOvertimeStarted();
-      unawaited(
-        inbox.insertMine(
-          type: 'rental_overtime',
-          title: 'Overtime — penalty accruing',
-          body:
-              'Your rental time has passed. A penalty fee is now being added.',
-          data: {'rental_id': rental.id},
-        ),
+      unawaited(_sendTimerAlert(rental.id, endTime, RideTimerAlert.overtime));
+    }
+  }
+
+  Future<void> _sendTimerAlert(
+    String rentalId,
+    DateTime scheduledEnd,
+    RideTimerAlert alert,
+  ) async {
+    try {
+      final first = await alert.claim(
+        rentalId: rentalId,
+        scheduledEnd: scheduledEnd,
       );
+      if (!first) return;
+      await NotificationService.notifyRideTimer(alert);
+      await NotificationRepository().insertMine(
+        type: alert.inboxType,
+        title: alert.title,
+        body: alert.body,
+        data: {'rental_id': rentalId},
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[ActiveRental] timer alert failed: $e');
     }
   }
 
@@ -282,12 +339,14 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
 
     setState(() => _extending = true);
     try {
-      await _repo.extendRental(rentalId: rental.id, extraMinutes: extra);
-      final refreshed = await _repo.fetchRentalById(rental.id);
+      final refreshed = await _repo.extendRental(
+        rentalId: rental.id,
+        extraMinutes: extra,
+      );
       if (!mounted) return;
       setState(() {
-        if (refreshed != null) _rental = refreshed;
-        _resetTimerSentinels(_rental ?? refreshed ?? rental);
+        _rental = refreshed;
+        _resetTimerSentinels(refreshed);
         _extending = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -302,7 +361,7 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
       setState(() => _extending = false);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not extend: $e')));
+      ).showSnackBar(SnackBar(content: Text(extendErrorText(e))));
     }
   }
 
@@ -707,15 +766,27 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(48),
                     ),
-                    onPressed: _extending ? null : () => _extendRental(rental),
+                    onPressed: _extending || isOvertime
+                        ? null
+                        : () => _extendRental(rental),
                     icon: _extending
                         ? const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.more_time_rounded),
-                    label: Text(_extending ? 'Extending…' : 'Extend time'),
+                        : Icon(
+                            isOvertime
+                                ? Icons.timer_off_rounded
+                                : Icons.more_time_rounded,
+                          ),
+                    label: Text(
+                      isOvertime
+                          ? 'Time is up. Return the bike'
+                          : _extending
+                              ? 'Extending…'
+                              : 'Extend time',
+                    ),
                   ),
                 ],
               ),
@@ -786,6 +857,8 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
     final cs = theme.colorScheme;
     final df = DateFormat('MMM d, h:mm a');
     final isRejected = rental.isRejected;
+    final isCancelled = rental.isCancelled;
+    final closedRequest = isRejected || isCancelled;
 
     final totalCost = rental.actualCost ?? rental.estimatedCost ?? 0;
     final penalty = rental.penaltyFee ?? 0;
@@ -807,17 +880,17 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                       width: 72,
                       height: 72,
                       decoration: BoxDecoration(
-                        color: isRejected
+                        color: closedRequest
                             ? cs.errorContainer
                             : cs.primaryContainer,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Icon(
-                        isRejected
+                        closedRequest
                             ? Icons.cancel_outlined
                             : Icons.check_circle_outline_rounded,
                         size: 36,
-                        color: isRejected
+                        color: closedRequest
                             ? cs.onErrorContainer
                             : cs.onPrimaryContainer,
                       ),
@@ -825,13 +898,17 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    isRejected ? 'Request declined' : 'Rental complete',
+                    isCancelled
+                        ? 'Request cancelled'
+                        : isRejected
+                            ? 'Request declined'
+                            : 'Rental complete',
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  if (!isRejected) ...[
+                  if (!closedRequest) ...[
                     const SizedBox(height: 20),
                     const Divider(),
                     const SizedBox(height: 12),
@@ -857,7 +934,9 @@ class _UserActiveRentalScreenState extends State<UserActiveRentalScreen> {
                   ] else ...[
                     const SizedBox(height: 8),
                     Text(
-                      'The bike has been made available again. Try requesting a different bike.',
+                      isCancelled
+                          ? 'You cancelled this request. The bike is available again.'
+                          : 'The bike has been made available again. Try requesting a different bike.',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: cs.onSurfaceVariant,
                         height: 1.4,

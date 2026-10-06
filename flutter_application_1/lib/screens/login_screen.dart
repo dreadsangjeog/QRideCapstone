@@ -144,54 +144,63 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 16),
                             Form(
                               key: _formKey,
-                              child: Column(
-                                children: [
-                                  TextFormField(
-                                    controller: _username,
-                                    keyboardType: TextInputType.text,
-                                    autocorrect: false,
-                                    textInputAction: TextInputAction.next,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Username',
-                                      hintText: 'Enter your username',
-                                      prefixIcon: Icon(Icons.person_outline),
+                              child: AutofillGroup(
+                                child: Column(
+                                  children: [
+                                    TextFormField(
+                                      controller: _username,
+                                      keyboardType: TextInputType.text,
+                                      autocorrect: false,
+                                      textInputAction: TextInputAction.next,
+                                      autofillHints: const [
+                                        AutofillHints.username,
+                                      ],
+                                      decoration: const InputDecoration(
+                                        labelText: 'Username',
+                                        hintText: 'Enter your username',
+                                        prefixIcon: Icon(Icons.person_outline),
+                                      ),
+                                      validator: AuthValidators.username,
                                     ),
-                                    validator: AuthValidators.username,
-                                  ),
-                                  const SizedBox(height: 14),
-                                  TextFormField(
-                                    controller: _password,
-                                    obscureText: !_showPassword,
-                                    textInputAction: TextInputAction.done,
-                                    decoration: InputDecoration(
-                                      labelText: 'Password',
-                                      hintText: 'Enter your password',
-                                      prefixIcon:
-                                          const Icon(Icons.lock_outline),
-                                      suffixIcon: IconButton(
-                                        tooltip: _showPassword
-                                            ? 'Hide password'
-                                            : 'Show password',
-                                        onPressed: () => setState(
-                                          () => _showPassword = !_showPassword,
-                                        ),
-                                        icon: Icon(
-                                          _showPassword
-                                              ? Icons.visibility_off_outlined
-                                              : Icons.visibility_outlined,
+                                    const SizedBox(height: 14),
+                                    TextFormField(
+                                      controller: _password,
+                                      obscureText: !_showPassword,
+                                      textInputAction: TextInputAction.done,
+                                      autofillHints: const [
+                                        AutofillHints.password,
+                                      ],
+                                      decoration: InputDecoration(
+                                        labelText: 'Password',
+                                        hintText: 'Enter your password',
+                                        prefixIcon:
+                                            const Icon(Icons.lock_outline),
+                                        suffixIcon: IconButton(
+                                          tooltip: _showPassword
+                                              ? 'Hide password'
+                                              : 'Show password',
+                                          onPressed: () => setState(
+                                            () =>
+                                                _showPassword = !_showPassword,
+                                          ),
+                                          icon: Icon(
+                                            _showPassword
+                                                ? Icons.visibility_off_outlined
+                                                : Icons.visibility_outlined,
+                                          ),
                                         ),
                                       ),
+                                      validator: (v) {
+                                        if ((v ?? '').isEmpty) {
+                                          return 'Password required';
+                                        }
+                                        return null;
+                                      },
+                                      onFieldSubmitted: (_) =>
+                                          _busy ? null : _submit(),
                                     ),
-                                    validator: (v) {
-                                      if ((v ?? '').isEmpty) {
-                                        return 'Password required';
-                                      }
-                                      return null;
-                                    },
-                                    onFieldSubmitted: (_) =>
-                                        _busy ? null : _submit(),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                             const SizedBox(height: 18),

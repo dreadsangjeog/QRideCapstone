@@ -14,6 +14,7 @@ import 'screens/register_screen.dart';
 import 'screens/user_root_shell.dart';
 import 'services/notification_service.dart';
 import 'services/ride_foreground_task.dart';
+import 'services/ride_session_sync.dart';
 import 'theme/app_theme.dart';
 import 'theme/login_season.dart';
 import 'theme/theme_controller.dart';
@@ -31,6 +32,9 @@ Future<void> main() async {
       anonKey: SupabaseConfig.effectiveAnonKey,
       authOptions: FlutterAuthClientOptions(
         authFlowType: kIsWeb ? AuthFlowType.implicit : AuthFlowType.pkce,
+        localStorage: kIsWeb
+            ? null
+            : RideSessionStorage.forUrl(SupabaseConfig.effectiveUrl),
       ),
     );
     await NotificationService.init();

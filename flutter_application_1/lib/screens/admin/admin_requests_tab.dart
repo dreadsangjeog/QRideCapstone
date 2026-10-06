@@ -64,9 +64,14 @@ class AdminRequestsTabState extends State<AdminRequestsTab>
     });
   }
 
+  final Set<String> _approving = {};
+
   Future<void> _approve(RentalWithBike row) async {
+    final id = row.rental.id;
+    if (!_approving.add(id)) return;
+    setState(() {});
     try {
-      await widget.repo.approveRental(row.rental.id);
+      await widget.repo.approveRental(id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -80,6 +85,9 @@ class AdminRequestsTabState extends State<AdminRequestsTab>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
+    } finally {
+      _approving.remove(id);
+      if (mounted) setState(() {});
     }
   }
 
@@ -181,7 +189,9 @@ class AdminRequestsTabState extends State<AdminRequestsTab>
                     _RequestCard(
                       key: ValueKey(row.rental.id),
                       row: row,
-                      onApprove: () => _approve(row),
+                      onApprove: _approving.contains(row.rental.id)
+                          ? null
+                          : () => _approve(row),
                     ),
                 ],
               ),

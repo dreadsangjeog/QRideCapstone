@@ -128,6 +128,19 @@ class SmoothLatLng {
     }
   }
 
+  /// Places the pin on [next] with no travel from the previous point.
+  ///
+  /// Used for the first real fix when the app opens. Easing from the
+  /// placeholder made the map slide across the city.
+  void snapTo(LatLng next, double? headingDeg) {
+    current = next;
+    target = next;
+    if (headingDeg != null && headingDeg >= 0 && headingDeg <= 360) {
+      heading = headingDeg;
+      headingTarget = headingDeg;
+    }
+  }
+
   /// Returns true if the displayed pose moved.
   bool tick({double follow = 0.34}) {
     final dLat = target.latitude - current.latitude;
@@ -145,13 +158,15 @@ class SmoothLatLng {
       heading = headingTarget;
       return false;
     }
-    // Snap when the jump is large so the pin doesn't lag far behind realtime GPS.
+    // Ease every step. A large GPS glitch used to cover most of the gap in
+    // one frame, which looked like the pin teleporting.
     final jumpM = Distance().as(
       LengthUnit.Meter,
       current,
       target,
     );
-    final factor = jumpM > 35 ? 0.72 : follow;
+    final capped = jumpM <= 4 ? follow : (4 / jumpM);
+    final factor = capped < follow ? capped : follow;
     current = LatLng(
       current.latitude + dLat * factor,
       current.longitude + dLng * factor,

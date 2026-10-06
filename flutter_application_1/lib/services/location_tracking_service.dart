@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'device_compass.dart';
+import 'ride_fix_gate.dart';
 import 'supabase_client.dart';
 
 /// Streams GPS + compass during an active rental and writes to Supabase
@@ -29,6 +30,8 @@ import 'supabase_client.dart';
 /// Some Android devices stop the fused location stream after the first fix.
 /// A poll + stream-restart watchdog keeps the pin moving for the whole ride.
 class LocationTrackingService {
+  RideFixGate _gate = RideFixGate();
+
   StreamSubscription<Position>? _sub;
   StreamSubscription<CompassReading>? _compassSub;
   Timer? _heartbeat;
@@ -271,7 +274,10 @@ class LocationTrackingService {
     }
     if (pos == null) return;
     final age = DateTime.now().difference(pos.timestamp);
-    if (!age.isNegative && age > const Duration(minutes: 10)) return;
+    // An older or loose last-known point throws the pin across campus when
+    // the first live GPS fix arrives.
+    if (!age.isNegative && age > const Duration(seconds: 45)) return;
+    if (pos.accuracy > 50) return;
 
     final payload = <String, dynamic>{
       'rental_id': rentalId,
@@ -410,26 +416,25 @@ class LocationTrackingService {
   }
 
   void _ingest(Position pos, {required String source}) {
-    final prev = _lastPosition;
-    // Ignore absurd jumps (>2km in one step) after we already have a fix —
-    // those are usually bad cold-start / cached outliers.
-    if (prev != null) {
-      final jumped = Geolocator.distanceBetween(
-        prev.latitude,
-        prev.longitude,
-        pos.latitude,
-        pos.longitude,
+    _lastGpsAt = DateTime.now();
+    final kept = _gate.accept(
+      sampleTime: pos.timestamp,
+      lat: pos.latitude,
+      lng: pos.longitude,
+      accuracy: pos.accuracy,
+      now: DateTime.now().toUtc(),
+    );
+    if (!kept) {
+      // ignore: avoid_print
+      print(
+        '[LocationTracking] drop jump '
+        'lat=${pos.latitude.toStringAsFixed(5)} '
+        'lng=${pos.longitude.toStringAsFixed(5)} '
+        'acc=${pos.accuracy.toStringAsFixed(0)}m',
       );
-      if (jumped > 2000 && pos.accuracy > 80) {
-        // ignore: avoid_print
-        print(
-          '[LocationTracking] drop outlier jump ${jumped.toStringAsFixed(0)}m',
-        );
-        return;
-      }
+      return;
     }
 
-    _lastGpsAt = DateTime.now();
     _lastPosition = pos;
     position.value = pos;
     _publishHeading(_usableHeading(pos));
@@ -632,6 +637,7 @@ class LocationTrackingService {
     _lastPosition = null;
     _pendingWrite = null;
     _pendingForce = false;
+    _gate = RideFixGate();
     _mirrorOnly = false;
     _headingListener = null;
     _rentalId = null;

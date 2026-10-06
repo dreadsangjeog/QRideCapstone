@@ -48,8 +48,9 @@ class _NotificationSettingsScreenState
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
               children: [
                 Text(
-                  'Choose how QRide alerts you on this device. System sound styles '
-                  '(ringtone / channel sound) are controlled in your phone settings.',
+                  'Choose how QRide alerts you on this device. Sound and vibration '
+                  'use your phone’s notification volume. Silent or Do Not Disturb '
+                  'mode mutes them.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: cs.onSurfaceVariant,
                         height: 1.4,
@@ -100,7 +101,7 @@ class _NotificationSettingsScreenState
                             color: cs.primary),
                         title: const Text('On-screen banners'),
                         subtitle: const Text(
-                          'Show pop-up banners while the app is open',
+                          'Pop up on screen. Sound and vibration still play when this is off',
                         ),
                         value: _banners,
                         onChanged: (v) async {
@@ -126,6 +127,24 @@ class _NotificationSettingsScreenState
                     trailing: const Icon(Icons.open_in_new_rounded, size: 18),
                     onTap: () => openAppSettings(),
                   ),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () async {
+                    if (!_sound && !_vibrate && !_banners) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Turn on sound, vibration, or banners to test an alert.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    await NotificationService.showTestAlert();
+                  },
+                  icon: const Icon(Icons.notifications_active_rounded),
+                  label: const Text('Test sound and vibration'),
                 ),
                 const SizedBox(height: 20),
                 Text(

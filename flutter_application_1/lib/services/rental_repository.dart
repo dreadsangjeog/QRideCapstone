@@ -83,7 +83,10 @@ class RentalRepository {
   }
 
   /// Extends an active rental by [extraMinutes] (minimum 15).
-  Future<void> extendRental({
+  ///
+  /// Returns the saved ride. Throws if the booked time did not increase,
+  /// which is what happened when the server accepted the call and wrote nothing.
+  Future<Rental> extendRental({
     required String rentalId,
     required int extraMinutes,
   }) async {
@@ -94,6 +97,7 @@ class RentalRepository {
         'must be at least 15',
       );
     }
+    final before = await fetchRentalById(rentalId);
     await SupabaseClientProvider.client.rpc(
       'extend_rental',
       params: {
@@ -101,6 +105,15 @@ class RentalRepository {
         'p_extra_mins': extraMinutes,
       },
     );
+    final after = await fetchRentalById(rentalId);
+    if (after == null || !after.isActive) {
+      throw StateError('rental_not_active_or_not_owner');
+    }
+    final previous = before?.plannedMinutes ?? after.plannedMinutes;
+    if (after.plannedMinutes < previous + extraMinutes) {
+      throw StateError('extension_not_saved');
+    }
+    return after;
   }
 
   /// Fetches the current user's most recent pending or active rental.
@@ -132,7 +145,7 @@ class RentalRepository {
     return Rental.fromJson(Map<String, dynamic>.from(row));
   }
 
-  /// Completed and rejected rentals for the signed-in user, newest first.
+  /// Completed, rejected, and rider-cancelled rentals, newest first.
   Future<List<RentalHistoryRow>> fetchMyRentalHistory() async {
     final user = SupabaseClientProvider.client.auth.currentUser;
     if (user == null) return [];
@@ -141,7 +154,7 @@ class RentalRepository {
         .from('rentals')
         .select('*, bikes(code, label)')
         .eq('user_id', user.id)
-        .inFilter('status', ['ended', 'rejected'])
+        .inFilter('status', ['ended', 'rejected', 'cancelled'])
         .order('started_at', ascending: false);
 
     return (rows as List<dynamic>).map((row) {

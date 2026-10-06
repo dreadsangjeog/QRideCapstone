@@ -8,9 +8,12 @@ import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../config/supabase_config.dart';
+import '../utils/jwt_claims.dart';
 import 'device_compass.dart';
+import 'notification_service.dart';
 import 'ride_fix_gate.dart';
 import 'ride_gps_events.dart';
+import 'ride_timer_alerts.dart';
 
 /// Top-level entry used by [FlutterForegroundTask.startService].
 @pragma('vm:entry-point')
@@ -35,6 +38,7 @@ class RideForegroundTask {
   static const _kAccessToken = 'qride_access_token';
   static const _kRefreshToken = 'qride_refresh_token';
   static const _kMode = 'qride_mode';
+  static const _kFixAt = 'qride_fix_at';
 
   /// Service is up, but GPS stays off until staff approve.
   static const modeWait = 'wait';
@@ -221,11 +225,42 @@ class RideForegroundTask {
     await FlutterForegroundTask.removeData(key: _kAccessToken);
     await FlutterForegroundTask.removeData(key: _kRefreshToken);
     await FlutterForegroundTask.removeData(key: _kMode);
+    await FlutterForegroundTask.removeData(key: _kFixAt);
   }
 
   static Future<bool> get isRunning async {
     if (!_isAndroid) return false;
     return FlutterForegroundTask.isRunningService;
+  }
+
+  /// When the service last received a live satellite fix.
+  ///
+  /// Saved by the ride isolate, so the UI can still see it after the activity
+  /// was destroyed. A missing or old value means the listener has stopped.
+  static Future<DateTime?> lastFixAt() async {
+    if (!_isAndroid) return null;
+    final raw = await FlutterForegroundTask.getData<String>(key: _kFixAt);
+    final ms = int.tryParse(raw ?? '');
+    if (ms == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+  }
+
+  /// The login the service last saved. Newer than the app's copy when the
+  /// service renewed it while QRide was closed.
+  static Future<({String userId, String accessToken, String refreshToken})?>
+      savedSession() async {
+    if (!_isAndroid) return null;
+    final userId = await FlutterForegroundTask.getData<String>(key: _kUserId);
+    final access = await FlutterForegroundTask.getData<String>(
+      key: _kAccessToken,
+    );
+    final refresh = await FlutterForegroundTask.getData<String>(
+      key: _kRefreshToken,
+    );
+    if (userId == null || userId.isEmpty) return null;
+    if (access == null || access.isEmpty) return null;
+    if (refresh == null || refresh.isEmpty) return null;
+    return (userId: userId, accessToken: access, refreshToken: refresh);
   }
 
   static void pushContext({
@@ -243,6 +278,31 @@ class RideForegroundTask {
       'refresh_token': ?refreshToken,
       'mode': ?mode,
     });
+  }
+
+  /// Asks the running ride service to open the GPS listener again.
+  ///
+  /// Used when QRide returns to the screen after a long lock. A new location
+  /// request is honored then. Doing it while the screen is still off is not.
+  static void reopenGps() {
+    if (!_isAndroid) return;
+    try {
+      FlutterForegroundTask.sendDataToTask({'gps_relisten': true});
+    } catch (_) {}
+  }
+
+  /// Starts the ride service's engine again. The listener inside a service
+  /// that survived a long lock can be dead while the notification is still up.
+  static Future<bool> restartWriter() async {
+    if (!_isAndroid) return false;
+    if (!await FlutterForegroundTask.isRunningService) return false;
+    final result = await FlutterForegroundTask.restartService();
+    if (result is ServiceRequestFailure) {
+      // ignore: avoid_print
+      print('[RideFgTask] restart failed: ${result.error}');
+      return false;
+    }
+    return true;
   }
 
   /// Latest compass heading from the UI isolate (works while standing still).
@@ -263,8 +323,12 @@ class RideForegroundTask {
   }) async {
     await FlutterForegroundTask.saveData(key: _kRentalId, value: rentalId);
     await FlutterForegroundTask.saveData(key: _kUserId, value: userId);
-    await FlutterForegroundTask.saveData(key: _kAccessToken, value: accessToken);
     await FlutterForegroundTask.saveData(key: _kMode, value: mode);
+    final saved = await FlutterForegroundTask.getData<String>(
+      key: _kAccessToken,
+    );
+    if (_expiresBefore(accessToken, saved)) return;
+    await FlutterForegroundTask.saveData(key: _kAccessToken, value: accessToken);
     if (refreshToken != null && refreshToken.isNotEmpty) {
       await FlutterForegroundTask.saveData(
         key: _kRefreshToken,
@@ -272,6 +336,15 @@ class RideForegroundTask {
       );
     }
   }
+}
+
+/// True when [token] expires before [other]. A pair the app sent before it
+/// picked up the service's renewal must not replace the newer one: its
+/// refresh token is already spent.
+bool _expiresBefore(String token, String? other) {
+  final a = jwtExpiry(token);
+  final b = jwtExpiry(other);
+  return a != null && b != null && a < b;
 }
 
 class RideLocationTaskHandler extends TaskHandler {
@@ -285,10 +358,11 @@ class RideLocationTaskHandler extends TaskHandler {
   bool _watchBusy = false;
   bool _promoting = false;
   DateTime? _lastWatchAt;
-  bool _useFusedFallback = false;
+  DateTime? _lastNudgeAt;
   int _listenGen = 0;
   Position? _lastPos;
   DateTime? _lastFixAt;
+  DateTime? _lastFixSavedAt;
   DateTime? _lastUploadAt;
   DateTime? _lastRestartAt;
   double? _compassHeading;
@@ -299,6 +373,18 @@ class RideLocationTaskHandler extends TaskHandler {
 
   /// Consecutive 401/403 responses → rental ended or session dead; stop FGS.
   int _denyStreak = 0;
+
+  Future<String?>? _refreshing;
+  DateTime? _lastRideCheckAt;
+  bool _rideCheckBusy = false;
+  DateTime? _scheduledEnd;
+  final Set<String> _timerAlertsSeen = {};
+
+  static const _rideCheckEvery = Duration(seconds: 30);
+
+  /// The ride screen posts the time alerts on the second. The service waits
+  /// this much longer, then posts any the app did not.
+  static const _timerAlertGrace = Duration(seconds: 20);
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -320,6 +406,7 @@ class RideLocationTaskHandler extends TaskHandler {
     }
     unawaited(_shareLatest());
     unawaited(_ensureGpsAlive());
+    unawaited(_checkRide());
   }
 
   @override
@@ -341,11 +428,18 @@ class RideLocationTaskHandler extends TaskHandler {
     final refresh = map['refresh_token']?.toString();
     if (rentalId != null && rentalId.isNotEmpty) _rentalId = rentalId;
     if (userId != null && userId.isNotEmpty) _userId = userId;
-    if (access != null && access.isNotEmpty) _accessToken = access;
-    if (refresh != null && refresh.isNotEmpty) _refreshToken = refresh;
+    if (access != null &&
+        access.isNotEmpty &&
+        !_expiresBefore(access, _accessToken)) {
+      _accessToken = access;
+      if (refresh != null && refresh.isNotEmpty) _refreshToken = refresh;
+    }
     final mode = map['mode']?.toString();
     if (mode == RideForegroundTask.modeShare) {
       unawaited(_promoteToSharing());
+    }
+    if (map['gps_relisten'] == true && _sharing) {
+      unawaited(_reopenGpsListener());
     }
     final rawHeading = map['heading'];
     if (rawHeading is num) {
@@ -389,23 +483,7 @@ class RideLocationTaskHandler extends TaskHandler {
     _watchBusy = true;
     try {
       if (_rentalId == null || _accessToken == null) await _loadPersisted();
-      final rentalId = _rentalId;
-      var token = _accessToken;
-      if (rentalId == null || token == null || token.isEmpty) return;
-
-      var status = await _fetchRentalStatus(rentalId, token);
-      if (status == 'unauthorized') {
-        final refreshed = await _tryRefreshToken();
-        if (refreshed != null) {
-          _accessToken = refreshed;
-          token = refreshed;
-          await FlutterForegroundTask.saveData(
-            key: RideForegroundTask._kAccessToken,
-            value: refreshed,
-          );
-          status = await _fetchRentalStatus(rentalId, token);
-        }
-      }
+      final status = (await _fetchRentalWithRefresh())?.status;
 
       if (status == 'active') {
         await _promoteToSharing();
@@ -443,12 +521,17 @@ class RideLocationTaskHandler extends TaskHandler {
     }
   }
 
-  /// `unauthorized`, `gone`, a rental status, or null when the network failed.
-  Future<String?> _fetchRentalStatus(String rentalId, String token) async {
+  /// Status is `unauthorized`, `gone`, or the rental status. Null when the
+  /// network failed.
+  Future<({String status, DateTime? scheduledEnd})?> _fetchRental(
+    String rentalId,
+    String token,
+  ) async {
     final base = SupabaseConfig.effectiveUrl;
     final anon = SupabaseConfig.effectiveAnonKey;
     final uri = Uri.parse(
-      '$base/rest/v1/rentals?id=eq.$rentalId&select=status',
+      '$base/rest/v1/rentals?id=eq.$rentalId'
+      '&select=status,approved_at,planned_minutes',
     );
     final response = await http
         .get(
@@ -461,18 +544,134 @@ class RideLocationTaskHandler extends TaskHandler {
         )
         .timeout(const Duration(seconds: 12));
     if (response.statusCode == 401 || response.statusCode == 403) {
-      return 'unauthorized';
+      return (status: 'unauthorized', scheduledEnd: null);
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       return null;
     }
+    const gone = (status: 'gone', scheduledEnd: null);
     final decoded = jsonDecode(response.body);
-    if (decoded is! List || decoded.isEmpty) return 'gone';
+    if (decoded is! List || decoded.isEmpty) return gone;
     final row = decoded.first;
-    if (row is! Map) return 'gone';
+    if (row is! Map) return gone;
     final status = row['status']?.toString();
-    if (status == null || status.isEmpty) return 'gone';
-    return status;
+    if (status == null || status.isEmpty) return gone;
+    final approvedAt = DateTime.tryParse(row['approved_at']?.toString() ?? '');
+    final minutes = row['planned_minutes'];
+    final end = approvedAt != null && minutes is num
+        ? approvedAt.toUtc().add(Duration(minutes: minutes.toInt()))
+        : null;
+    return (status: status, scheduledEnd: end);
+  }
+
+  Future<({String status, DateTime? scheduledEnd})?>
+      _fetchRentalWithRefresh() async {
+    final rentalId = _rentalId;
+    final token = _accessToken;
+    if (rentalId == null || token == null || token.isEmpty) return null;
+    final rental = await _fetchRental(rentalId, token);
+    if (rental?.status != 'unauthorized') return rental;
+    final refreshed = await _tryRefreshToken();
+    if (refreshed == null) return rental;
+    return _fetchRental(rentalId, refreshed);
+  }
+
+  /// Stops the service once staff end the ride. Refused uploads also stop it,
+  /// but nothing is uploaded while GPS is quiet, such as indoors after the
+  /// bike is returned.
+  Future<void> _checkRide() async {
+    if (_rideCheckBusy) return;
+    _rideCheckBusy = true;
+    try {
+      final last = _lastRideCheckAt;
+      if (last == null ||
+          DateTime.now().difference(last) >= _rideCheckEvery) {
+        _lastRideCheckAt = DateTime.now();
+        final rental = await _fetchRentalWithRefresh();
+        final status = rental?.status;
+        if (status == 'ended' || status == 'rejected' || status == 'gone') {
+          // ignore: avoid_print
+          print('[RideFgTask] stopping — ride is closed');
+          FlutterForegroundTask.sendDataToMain({
+            'stopped': true,
+            'reason': 'closed',
+          });
+          await FlutterForegroundTask.stopService();
+          return;
+        }
+        if (status == 'active') _scheduledEnd = rental?.scheduledEnd;
+      }
+      await _postMissedTimerAlert();
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideFgTask] ride check failed: $e');
+    } finally {
+      _rideCheckBusy = false;
+    }
+  }
+
+  /// Posts the 5-minute or overtime alert when QRide is closed or missed it.
+  Future<void> _postMissedTimerAlert() async {
+    final end = _scheduledEnd;
+    final rentalId = _rentalId;
+    if (end == null || rentalId == null) return;
+    final left = end.difference(DateTime.now().toUtc());
+    final RideTimerAlert alert;
+    if (left <= -_timerAlertGrace) {
+      alert = RideTimerAlert.overtime;
+    } else if (left > Duration.zero &&
+        left <= const Duration(minutes: 5) - _timerAlertGrace) {
+      alert = RideTimerAlert.fiveMinutes;
+    } else {
+      return;
+    }
+    if (!_timerAlertsSeen.add('${alert.name}@${end.millisecondsSinceEpoch}')) {
+      return;
+    }
+    final first = await alert.claim(rentalId: rentalId, scheduledEnd: end);
+    if (!first) return;
+    try {
+      await NotificationService.notifyRideTimerFromService(alert);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideFgTask] timer alert failed: $e');
+    }
+    await _insertTimerInboxRow(alert, rentalId);
+  }
+
+  Future<void> _insertTimerInboxRow(
+    RideTimerAlert alert,
+    String rentalId,
+  ) async {
+    final userId = _userId;
+    final token = _accessToken;
+    if (userId == null || token == null || token.isEmpty) return;
+    final base = SupabaseConfig.effectiveUrl;
+    final anon = SupabaseConfig.effectiveAnonKey;
+    try {
+      await http
+          .post(
+            Uri.parse('$base/rest/v1/notifications'),
+            headers: {
+              'apikey': anon,
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal',
+            },
+            body: jsonEncode({
+              'user_id': userId,
+              'role_scope': 'user',
+              'type': alert.inboxType,
+              'title': alert.title,
+              'body': alert.body,
+              'data': {'rental_id': rentalId},
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+    } catch (e) {
+      // ignore: avoid_print
+      print('[RideFgTask] timer inbox row failed: $e');
+    }
   }
 
   void _startCompass() {
@@ -493,8 +692,9 @@ class RideLocationTaskHandler extends TaskHandler {
     }
   }
 
-  /// One GPS subscription for the whole ride. Leaving it registered is what
-  /// keeps fixes arriving after QRide is backgrounded or the screen locks.
+  /// One GPS subscription for the whole ride. It is not replaced when the
+  /// screen locks or QRide is closed: that new request is ignored until the
+  /// app is open again, which is what made the pin freeze.
   Future<void> _listenGps() async {
     final gen = ++_listenGen;
     await _gpsSub?.cancel();
@@ -502,8 +702,7 @@ class RideLocationTaskHandler extends TaskHandler {
     _gpsSub = null;
     _lastRestartAt = DateTime.now();
 
-    final stream = _useFusedFallback ? _fusedPositions() : RideGpsEvents.positions();
-    _gpsSub = stream.listen(
+    _gpsSub = RideGpsEvents.positions().listen(
       (pos) {
         if (gen != _listenGen) return;
         _onFix(pos);
@@ -512,26 +711,12 @@ class RideLocationTaskHandler extends TaskHandler {
         if (gen != _listenGen) return;
         // ignore: avoid_print
         print('[RideFgTask] gps stream error: $e');
-        if (_useFusedFallback) return;
-        _useFusedFallback = true;
-        unawaited(_listenGps());
+        _gpsSub = null;
       },
       onDone: () {
         if (gen != _listenGen) return;
-        // Let the watchdog re-subscribe. Restarting here loops if the
-        // stream closes as soon as it opens.
+        _gpsSub = null;
       },
-    );
-  }
-
-  Stream<Position> _fusedPositions() {
-    return Geolocator.getPositionStream(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-        forceLocationManager: false,
-        intervalDuration: const Duration(seconds: 2),
-      ),
     );
   }
 
@@ -549,35 +734,71 @@ class RideLocationTaskHandler extends TaskHandler {
     if (kept) _lastPos = pos;
     // Only a recent satellite time proves the chip is still running.
     // A cached point can be stored once, but it must not hold the pin green.
-    if (fresh) _lastFixAt = DateTime.now();
+    if (fresh) {
+      _lastFixAt = DateTime.now();
+      _rememberLiveFix();
+    }
     if (kept || fresh) unawaited(_shareLatest());
   }
 
-  /// Re-subscribe if the chip goes quiet. A fused fallback that only repeats
-  /// a cached point is abandoned so a long screen-off ride returns to GPS.
+  /// Opens the GPS listener again now that QRide is on screen.
+  ///
+  /// A healthy stream is left alone. A quiet one is registered again, because
+  /// that request is only accepted while QRide is visible. The subscription is
+  /// not cancelled first: cancelling it used to remove the only listener
+  /// Android would still deliver to.
+  Future<void> _reopenGpsListener() async {
+    if (_gpsSub == null) {
+      await _listenGps();
+    }
+    final fixAt = _lastFixAt;
+    final quiet = fixAt == null ||
+        DateTime.now().difference(fixAt) > const Duration(seconds: 15);
+    if (!quiet) {
+      await RideGpsEvents.nudge();
+      return;
+    }
+    await RideGpsEvents.rebind();
+  }
+
+  void _rememberLiveFix() {
+    final now = DateTime.now().toUtc();
+    final prev = _lastFixSavedAt;
+    if (prev != null && now.difference(prev) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastFixSavedAt = now;
+    unawaited(
+      FlutterForegroundTask.saveData(
+        key: RideForegroundTask._kFixAt,
+        value: now.millisecondsSinceEpoch.toString(),
+      ),
+    );
+  }
+
+  /// Keeps the original listener. A quiet chip gets one fresh read. The
+  /// listener is opened again only if it actually closed.
   Future<void> _ensureGpsAlive() async {
     final now = DateTime.now();
-    final restarted = _lastRestartAt;
-    // Before any fix, switch to the fused provider quickly. After that, keep
-    // the longer cooldown so a quiet pocket ride is not restarted in a loop.
-    final cooldown = _lastPos == null
-        ? const Duration(seconds: 6)
-        : const Duration(seconds: 30);
-    if (restarted != null && now.difference(restarted) < cooldown) {
+    if (_gpsSub == null) {
+      final restarted = _lastRestartAt;
+      if (restarted != null &&
+          now.difference(restarted) < const Duration(seconds: 8)) {
+        return;
+      }
+      await _listenGps();
       return;
     }
     final fixAt = _lastFixAt;
     final quiet =
-        fixAt == null || now.difference(fixAt) > const Duration(seconds: 18);
-    if (!quiet && !_useFusedFallback) return;
-    if (!quiet &&
-        _useFusedFallback &&
-        restarted != null &&
-        now.difference(restarted) < const Duration(seconds: 60)) {
+        fixAt == null || now.difference(fixAt) > const Duration(seconds: 20);
+    if (!quiet) return;
+    final nudged = _lastNudgeAt;
+    if (nudged != null && now.difference(nudged) < const Duration(seconds: 15)) {
       return;
     }
-    _useFusedFallback = quiet ? !_useFusedFallback : false;
-    await _listenGps();
+    _lastNudgeAt = now;
+    await RideGpsEvents.nudge();
   }
 
   Future<void> _shareLatest() async {
@@ -624,11 +845,6 @@ class RideLocationTaskHandler extends TaskHandler {
       if (result == _UpsertResult.unauthorized) {
         final refreshed = await _tryRefreshToken();
         if (refreshed != null) {
-          _accessToken = refreshed;
-          await FlutterForegroundTask.saveData(
-            key: RideForegroundTask._kAccessToken,
-            value: refreshed,
-          );
           result = await _upsertLocation(
             rentalId: rentalId,
             userId: userId,
@@ -776,7 +992,15 @@ class RideLocationTaskHandler extends TaskHandler {
     } catch (_) {}
   }
 
-  Future<String?> _tryRefreshToken() async {
+  /// Renews the login shared with the app. The old refresh token stops
+  /// working, so the new pair is saved and sent to the app right away.
+  /// Callers that hit an expired token together share one renewal.
+  Future<String?> _tryRefreshToken() {
+    return _refreshing ??=
+        _renewSession().whenComplete(() => _refreshing = null);
+  }
+
+  Future<String?> _renewSession() async {
     final refresh = _refreshToken;
     if (refresh == null || refresh.isEmpty) return null;
     final base = SupabaseConfig.effectiveUrl;
@@ -797,12 +1021,25 @@ class RideLocationTaskHandler extends TaskHandler {
       if (body is! Map) return null;
       final access = body['access_token']?.toString();
       final nextRefresh = body['refresh_token']?.toString();
+      if (access == null || access.isEmpty) return null;
+      _accessToken = access;
       if (nextRefresh != null && nextRefresh.isNotEmpty) {
         _refreshToken = nextRefresh;
         await FlutterForegroundTask.saveData(
           key: RideForegroundTask._kRefreshToken,
           value: nextRefresh,
         );
+      }
+      await FlutterForegroundTask.saveData(
+        key: RideForegroundTask._kAccessToken,
+        value: access,
+      );
+      final pairRefresh = _refreshToken;
+      if (pairRefresh != null && pairRefresh.isNotEmpty) {
+        FlutterForegroundTask.sendDataToMain({
+          'auth_access_token': access,
+          'auth_refresh_token': pairRefresh,
+        });
       }
       return access;
     } catch (_) {
